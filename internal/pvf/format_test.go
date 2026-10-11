@@ -124,32 +124,36 @@ func TestUnknownHashWritePolicy(t *testing.T) {
 }
 
 func TestBatchClonePreservesContainerAndRules(t *testing.T) {
-	a := New()
-	a.format = paged110Profile
-	a.pageKeys = make([]byte, 32)
-	stage := a.CloneForBatch()
-	if !stage.IsPaged110() || stage.ContentRules() != a.ContentRules() {
-		t.Fatal("clone lost format")
-	}
-	if !stage.WriteCapabilities().CanSave {
-		t.Fatal("clone lost write state")
-	}
-	if offset := stage.StringOffset("ascii"); offset&1 == 0 {
-		t.Fatal("clone used UTF-8 pool")
-	}
-	stage.pageKeys[0] = 1
-	if a.pageKeys[0] != 0 {
-		t.Fatal("clone aliases mutable page state")
-	}
-	if len(a.strW) != 2 {
-		t.Fatal("clone modified original pool")
+	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile} {
+		t.Run(profile.id, func(t *testing.T) {
+			a := New()
+			a.format = profile
+			a.pageKeys = make([]byte, 32)
+			stage := a.CloneForBatch()
+			if !stage.IsPaged() || stage.ContentRules() != a.ContentRules() || stage.Format() != profile.id {
+				t.Fatal("clone lost format")
+			}
+			if !stage.WriteCapabilities().CanSave {
+				t.Fatal("clone lost write state")
+			}
+			if offset := stage.StringOffset("ascii"); offset&1 == 0 {
+				t.Fatal("clone used UTF-8 pool")
+			}
+			stage.pageKeys[0] = 1
+			if a.pageKeys[0] != 0 {
+				t.Fatal("clone aliases mutable page state")
+			}
+			if len(a.strW) != 2 {
+				t.Fatal("clone modified original pool")
+			}
+		})
 	}
 }
 
 func TestContentRulesIndependentOfContainer(t *testing.T) {
 	a := New()
 	a.format.rules = ContentRules{UTF16Only: true, RequiresIndexHash: true}
-	if a.IsPaged110() {
+	if a.IsPaged() {
 		t.Fatal("content rules changed container")
 	}
 	if offset := a.StringOffset("ascii"); offset&1 == 0 {
@@ -168,15 +172,19 @@ func TestContentRulesIndependentOfContainer(t *testing.T) {
 }
 
 func TestPagedWriteRequiresPageState(t *testing.T) {
-	a := New()
-	a.format = paged110Profile
-	before := append([]byte(nil), a.strA...)
-	var out bytes.Buffer
-	if err := a.SaveTo(&out); !errors.Is(err, ErrPaged110ReadOnly) {
-		t.Fatalf("got %v", err)
-	}
-	if !bytes.Equal(before, a.strA) || out.Len() != 0 {
-		t.Fatal("rejected write changed state")
+	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile} {
+		t.Run(profile.id, func(t *testing.T) {
+			a := New()
+			a.format = profile
+			before := append([]byte(nil), a.strA...)
+			var out bytes.Buffer
+			if err := a.SaveTo(&out); !errors.Is(err, ErrPagedReadOnly) {
+				t.Fatalf("got %v", err)
+			}
+			if !bytes.Equal(before, a.strA) || out.Len() != 0 {
+				t.Fatal("rejected write changed state")
+			}
+		})
 	}
 }
 
@@ -228,70 +236,77 @@ func TestParseRejectsInvalidNameSection(t *testing.T) {
 // This exercises page wrapping, parsing, edits and clone/save with synthetic
 // page state, independently of proprietary sidecar fixtures.
 func TestPagedContainerSyntheticRoundTrip(t *testing.T) {
-	a := New()
-	a.format = paged110Profile
-	a.keys = paged110Keys()
-	a.keys.hash = standardKeys().hash
-	a.keys.hashKnown = true
-	a.pageKeys = make([]byte, paged110PageKeySize)
-	payload := make([]byte, 20000)
-	_, _ = rand.New(rand.NewSource(42)).Read(payload)
-	a.AddFile("etc/padding.txt", payload, TypeUnicode)
-	i, err := a.AddFileText("etc/edit.txt", "before", TypeUnicode)
-	if err != nil {
-		t.Fatal(err)
-	}
-	openLogical := func(packed []byte) *Archive {
-		t.Helper()
-		logical := append([]byte(nil), packed...)
-		if decryptPageGuards(logical, a.pageKeys) != 1 {
-			t.Fatal("page not unlocked")
-		}
-		detected, ok := probeHeader(logical, a.keys, false)
-		if !ok {
-			t.Fatal("logical header not recognized")
-		}
-		detected.format, detected.pageKeys = paged110Profile, append([]byte(nil), a.pageKeys...)
-		b, err := parseDetected(detected)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return b
-	}
-	var original bytes.Buffer
-	if err := a.SaveTo(&original); err != nil {
-		t.Fatal(err)
-	}
-	b := openLogical(original.Bytes())
-	var unchanged bytes.Buffer
-	if err := b.SaveTo(&unchanged); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(original.Bytes(), unchanged.Bytes()) {
-		t.Fatal("unchanged page container differs")
-	}
-	stage := b.CloneForBatch()
-	if err := stage.SetText(i, "after"); err != nil {
-		t.Fatal(err)
-	}
-	stage.AddFile("etc/new.txt", utf16le("new"), TypeUnicode)
-	var edited bytes.Buffer
-	if err := stage.SaveTo(&edited); err != nil {
-		t.Fatal(err)
-	}
-	c := openLogical(edited.Bytes())
-	assertSavedHashMatchesFiles(t, c)
-	if text, err := c.Text(i); err != nil || text != "after" {
-		t.Fatal("edit did not round trip")
-	}
-	if _, ok := c.Find("etc/new.txt"); !ok {
-		t.Fatal("new entry missing")
-	}
-	if text, err := b.Text(i); err != nil || text != "before" {
-		t.Fatal("staging mutated source")
-	}
-	if len(c.strA) != 0 {
-		t.Fatal("UTF-16-only rule not retained")
+	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile} {
+		t.Run(profile.id, func(t *testing.T) {
+			a := New()
+			a.format = profile
+			a.keys = paged110Keys()
+			a.keys.hash = standardKeys().hash
+			a.keys.hashKnown = true
+			a.pageKeys = make([]byte, paged110PageKeySize)
+			payload := make([]byte, 20000)
+			_, _ = rand.New(rand.NewSource(42)).Read(payload)
+			a.AddFile("etc/padding.txt", payload, TypeUnicode)
+			i, err := a.AddFileText("etc/edit.txt", "before", TypeUnicode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			openLogical := func(packed []byte) *Archive {
+				t.Helper()
+				logical := append([]byte(nil), packed...)
+				if decryptPageGuards(logical, a.pageKeys) != 1 {
+					t.Fatal("page not unlocked")
+				}
+				detected, ok := probeHeader(logical, a.keys, false)
+				if !ok {
+					t.Fatal("logical header not recognized")
+				}
+				detected.format, detected.pageKeys = profile, append([]byte(nil), a.pageKeys...)
+				b, err := parseDetected(detected)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return b
+			}
+			var original bytes.Buffer
+			if err := a.SaveTo(&original); err != nil {
+				t.Fatal(err)
+			}
+			b := openLogical(original.Bytes())
+			var unchanged bytes.Buffer
+			if err := b.SaveTo(&unchanged); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(original.Bytes(), unchanged.Bytes()) {
+				t.Fatal("unchanged page container differs")
+			}
+			stage := b.CloneForBatch()
+			if err := stage.SetText(i, "after"); err != nil {
+				t.Fatal(err)
+			}
+			stage.AddFile("etc/new.txt", utf16le("new"), TypeUnicode)
+			var edited bytes.Buffer
+			if err := stage.SaveTo(&edited); err != nil {
+				t.Fatal(err)
+			}
+			c := openLogical(edited.Bytes())
+			assertSavedHashMatchesFiles(t, c)
+			if text, err := c.Text(i); err != nil || text != "after" {
+				t.Fatal("edit did not round trip")
+			}
+			if _, ok := c.Find("etc/new.txt"); !ok {
+				t.Fatal("new entry missing")
+			}
+			if text, err := b.Text(i); err != nil || text != "before" {
+				t.Fatal("staging mutated source")
+			}
+			if len(c.strA) != 0 {
+				t.Fatal("UTF-16-only rule not retained")
+			}
+			if c.Format() != profile.id || c.ClientVersion() != a.ClientVersion() {
+				t.Fatal("edited archive lost client identity")
+			}
+		})
 	}
 }
 
@@ -343,7 +358,8 @@ func TestClientVersion(t *testing.T) {
 		profile formatProfile
 		want    string
 	}{
-		{standardProfile, "90US"}, {alternateProfile, "90CN"}, {paged110Profile, "110US"}, {recoveredProfile, ""}, {formatProfile{id: "future"}, ""},
+		{standardProfile, "90US"}, {alternateProfile, "90CN"}, {paged110Profile, "110US"},
+		{paged115Profile, "115US"}, {pagedProfile, ""}, {recoveredProfile, ""}, {formatProfile{id: "future"}, ""},
 	} {
 		a := New()
 		a.format = tc.profile
@@ -357,5 +373,33 @@ func TestClientVersion(t *testing.T) {
 	var absent *Archive
 	if absent.ClientVersion() != "" {
 		t.Fatal("nil archive must have unknown version")
+	}
+}
+
+func TestPagedClientProfiles(t *testing.T) {
+	key, err := paged110PrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pagedClientProfile(&key.PublicKey); got.id != FormatPaged110 {
+		t.Fatal("embedded 110US client identity changed")
+	}
+	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile} {
+		a := New()
+		a.format = profile
+		if !a.IsPaged() || !a.IsPaged110() || !a.Info().Paged110 {
+			t.Fatal("shared paged capability or legacy compatibility lost")
+		}
+		if a.ContentRules() != paged110Profile.rules {
+			t.Fatal("paged content rules diverged")
+		}
+		if a.Info().Format != profile.id {
+			t.Fatal("archive info lost client format")
+		}
+		if !errors.Is(ErrPaged110Keys, ErrPagedKeys) ||
+			!errors.Is(ErrPaged110ReadOnly, ErrPagedReadOnly) ||
+			!errors.Is(ErrPaged110StructureLocked, ErrPagedStructureLocked) {
+			t.Fatal("legacy error identity changed")
+		}
 	}
 }

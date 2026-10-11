@@ -136,7 +136,7 @@
           </div>
           <div class="field">
             <label for="previewVersion">PVF 版本</label>
-            <select id="previewVersion"><option value="90US">90US</option><option value="90CN">90CN</option><option value="110US">110US</option><option value="">未知版本</option></select>
+            <select id="previewVersion"><option value="90US">90US</option><option value="90CN">90CN</option><option value="110US">110US</option><option value="115US">115US</option><option value="">未知版本</option></select>
           </div>
           <div class="field">
             <label for="previewText">反编译文本</label>
@@ -360,12 +360,12 @@
 
     function versionFields(definition) {
       return `<div class="section"><div class="section-title">适用 PVF 版本</div>
-        ${field("版本（可多选）", ["90US", "90CN", "110US"].map((version) => `<label class="checkbox-control" for="pvf-version-${version}"><input id="pvf-version-${version}" type="checkbox" ${(definition.pvfVersions || []).includes(version) ? "checked" : ""} />${version}</label>`).join(""), "未选择表示全版本适用；引用共享字段时，两处版本限制须同时满足")}
+        ${field("版本（可多选）", ["90US", "90CN", "110US", "115US"].map((version) => `<label class="checkbox-control" for="pvf-version-${version}"><input id="pvf-version-${version}" type="checkbox" ${(definition.pvfVersions || []).includes(version) ? "checked" : ""} />${version}</label>`).join(""), "未选择表示全版本适用；引用共享字段时，两处版本限制须同时满足")}
       </div>`;
     }
 
     function bindVersions(definition) {
-      const versions = ["90US", "90CN", "110US"];
+      const versions = ["90US", "90CN", "110US", "115US"];
       for (const version of versions) {
         bindChecked(`pvf-version-${version}`, () => {
           const selected = versions.filter((value) => $(`pvf-version-${value}`).checked);

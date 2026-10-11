@@ -393,7 +393,7 @@ func (l *ListHandle) candidatePaths(raw string) []string {
 }
 
 func (l *ListHandle) rootRelative() bool {
-	return l.api.tx.Stage().IsPaged110() || strings.EqualFold(path.Dir(l.path), "list")
+	return l.api.tx.Stage().IsPaged() || strings.EqualFold(path.Dir(l.path), "list")
 }
 
 // rebase converts a full archive path into the list-relative form, when the

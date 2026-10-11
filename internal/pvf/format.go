@@ -26,17 +26,30 @@ type formatProfile struct {
 const (
 	FormatStandard  = "standard"
 	FormatAlternate = "alternate"
+	FormatPaged     = "paged"
 	FormatPaged110  = "paged110"
+	FormatPaged115  = "paged115"
 	FormatRecovered = "recovered"
 )
 
 var standardProfile = formatProfile{id: FormatStandard}
 var alternateProfile = formatProfile{id: FormatAlternate}
 var recoveredProfile = formatProfile{id: FormatRecovered}
+var pagedContentRules = ContentRules{UTF16Only: true, RequiresIndexHash: true, SupportsStringReferences: true}
+var pagedProfile = formatProfile{
+	id:        FormatPaged,
+	container: pagedContainer,
+	rules:     pagedContentRules,
+}
 var paged110Profile = formatProfile{
 	id:        FormatPaged110,
 	container: pagedContainer,
-	rules:     ContentRules{UTF16Only: true, RequiresIndexHash: true, SupportsStringReferences: true},
+	rules:     pagedContentRules,
+}
+var paged115Profile = formatProfile{
+	id:        FormatPaged115,
+	container: pagedContainer,
+	rules:     pagedContentRules,
 }
 
 // WriteCapabilities is derived from both the format and recovered archive
@@ -59,8 +72,8 @@ func (a *Archive) canRebuildHash() bool {
 }
 
 func (a *Archive) WriteCapabilities() WriteCapabilities {
-	if a.IsPaged110() && len(a.pageKeys) == 0 {
-		return WriteCapabilities{Reason: ErrPaged110ReadOnly.Error()}
+	if a.IsPaged() && len(a.pageKeys) == 0 {
+		return WriteCapabilities{Reason: ErrPagedReadOnly.Error()}
 	}
 	if !a.canRebuildHash() {
 		return WriteCapabilities{CanSave: true, Reason: ErrStructureLocked.Error()}
@@ -71,7 +84,7 @@ func (a *Archive) WriteCapabilities() WriteCapabilities {
 func (a *Archive) validateWrite() error {
 	capabilities := a.WriteCapabilities()
 	if !capabilities.CanSave {
-		return ErrPaged110ReadOnly
+		return ErrPagedReadOnly
 	}
 	if (a.structuralDirty || a.poolsDirty) && !capabilities.CanChangeStructure {
 		return a.structureLockedError()
@@ -80,8 +93,8 @@ func (a *Archive) validateWrite() error {
 }
 
 func (a *Archive) structureLockedError() error {
-	if a.IsPaged110() {
-		return ErrPaged110StructureLocked
+	if a.IsPaged() {
+		return ErrPagedStructureLocked
 	}
 	return ErrStructureLocked
 }
@@ -99,6 +112,8 @@ func (a *Archive) ClientVersion() string {
 		return "90CN"
 	case FormatPaged110:
 		return "110US"
+	case FormatPaged115:
+		return "115US"
 	default:
 		return ""
 	}

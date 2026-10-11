@@ -85,7 +85,12 @@ func TestProbe110AsyncOpenBasicFile(t *testing.T) {
 	a := c.archive
 	index, ok := a.Find("equipment/character/common/amulet/100300877.equ")
 	stage := c.indexStatus.Stage
+	version, format := a.ClientVersion(), a.Format()
 	c.mu.RUnlock()
+	if want := os.Getenv("PVF_TEST_CLIENT_VERSION"); want != "" && version != want {
+		t.Fatalf("client version = %q, want %q", version, want)
+	}
+	t.Logf("client identity: format=%s version=%s", format, version)
 	if !ok {
 		t.Fatal("target file not found")
 	}

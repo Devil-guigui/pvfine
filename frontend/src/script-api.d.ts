@@ -56,7 +56,7 @@ export interface PVFSection {
   getOriStrValue(index?: number): string | undefined;
   /** 始终写入旧式 type 6 文本，不注册字符串表引用。 */
   setStrValue(text: string, index?: number): void;
-  /** 字符串在 110US 自动注册为 type 8 引用，其它版本写入 type 6；精确值对象不转换。 */
+  /** 支持字符串引用的分页归档自动注册为 type 8 引用，其它格式写入 type 6；精确值对象不转换。 */
   set(value: PVFValueInput, index?: number): void;
   setValues(values: PVFValueInput[]): void;
   append(value: PVFValueInput): void;
@@ -100,7 +100,7 @@ export interface PVFDocument {
       endTag?: boolean;
     },
   ): boolean;
-  /** 字符串在 110US 自动注册为 type 8 引用，其它版本写入 type 6；精确值对象不转换。 */
+  /** 支持字符串引用的分页归档自动注册为 type 8 引用，其它格式写入 type 6；精确值对象不转换。 */
   set(
     path: SectionPath,
     value: PVFValueInput,
@@ -148,7 +148,7 @@ export type PVFListID = string | number;
 /**
  * 一个 .lst 列表文件的读写句柄。
  *
- * 旧布局按 .lst 所在目录存储相对路径，110US / list/ 集中布局按归档根存储路径。
+ * 旧布局按 .lst 所在目录存储相对路径，分页 / list/ 集中布局按归档根存储路径。
  * set/mset 同时接受列表目录相对路径和完整归档路径（按布局自动换算），并要求目标文件存在；
  * getId 只做路径换算，不要求文件存在。
  */

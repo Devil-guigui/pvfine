@@ -10,7 +10,7 @@ import (
 
 func TestPVFVersionRulesAndSourceRoundTrip(t *testing.T) {
 	document := Document{Version: 1}
-	for i, versions := range [][]string{nil, {}, {"90US"}, {"90CN", "110US"}} {
+	for i, versions := range [][]string{nil, {}, {"90US"}, {"90CN", "110US"}, {"115US"}} {
 		document.Rules = append(document.Rules, Rule{ID: string(rune('a' + i)), PVFVersions: versions,
 			Target: TargetSpec{Kind: "path"}, Annotation: AnnotationSpec{Title: string(rune('a' + i)), Type: "text"}})
 	}
@@ -21,7 +21,7 @@ func TestPVFVersionRulesAndSourceRoundTrip(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		want    int
-	}{{"90US", 3}, {"90CN", 3}, {"110US", 3}, {"", 2}, {"future", 2}} {
+	}{{"90US", 3}, {"90CN", 3}, {"110US", 3}, {"115US", 3}, {"", 2}, {"future", 2}} {
 		t.Run(tc.version, func(t *testing.T) {
 			runtime := engine.ForVersion(tc.version)
 			if got := len(runtime.AnnotatePath("a.equ", false)[0].RuleIDs); got != tc.want {
@@ -40,6 +40,12 @@ func TestPVFVersionRulesAndSourceRoundTrip(t *testing.T) {
 			}
 			if !reflect.DeepEqual(restored.Rules[3].PVFVersions, []string{"90CN", "110US"}) {
 				t.Fatal("serialization lost versions")
+			}
+			if !reflect.DeepEqual(restored.Rules[4].PVFVersions, []string{"115US"}) {
+				t.Fatal("serialization lost 115US scope")
+			}
+			if got := runtime.ForVersion("115US").AnnotatePath("a.equ", false)[0].RuleIDs; !reflect.DeepEqual(got, []string{"a", "b", "e"}) {
+				t.Fatalf("115US enabled rules from a different version: %v", got)
 			}
 			if got := len(runtime.ForVersion("90US").AnnotatePath("a.equ", false)[0].RuleIDs); got != 3 {
 				t.Fatal("switching versions lost rules")
@@ -60,6 +66,9 @@ func TestPVFVersionFieldIntersectionAndImplicitFallback(t *testing.T) {
 		{"field excludes rule", []string{"90US", "90CN"}, []string{"90CN", "110US"}, "110US", "", 0},
 		{"rule excludes field falls back", []string{"90US", "90CN"}, []string{"90CN", "110US"}, "90US", "field:shared", 1},
 		{"empty intersection", []string{"90US"}, []string{"110US"}, "110US", "", 0},
+		{"115US intersection", []string{"110US", "115US"}, []string{"115US"}, "115US", "explicit", 1},
+		{"110US field excludes 115US", []string{"110US"}, []string{"115US"}, "115US", "", 0},
+		{"115US field excludes 110US", []string{"115US"}, []string{"110US"}, "110US", "", 0},
 		{"unrestricted rule restricted field", []string{"90CN"}, nil, "90US", "", 0},
 		{"restricted rule unrestricted field", nil, []string{"110US"}, "90CN", "field:shared", 1},
 		{"unknown restricted field", []string{"90US"}, nil, "", "", 0},

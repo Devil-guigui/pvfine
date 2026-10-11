@@ -24,15 +24,15 @@ func detectArchive(data []byte, sidecarDir string) (detectedArchive, error) {
 			return result, nil
 		}
 	}
-	if dec, pageKeys, keys, hdr, ok := unlockPaged110(data, sidecarDir); ok {
-		return detectedArchive{data: dec, hdr: hdr, keys: keys, format: paged110Profile, pageKeys: pageKeys}, nil
+	if result, ok := unlockPaged(data, sidecarDir); ok {
+		return result, nil
 	}
 	// Recovery remains available even if unrelated sidecar files are present.
 	if hdr, guard, keys, ok := recoverHeader(data); ok {
 		return detectedArchive{data: data, hdr: hdr, guard: guard, keys: keys, format: recoveredProfile}, nil
 	}
 	if hasSealedKeyFile(sidecarDir) {
-		return detectedArchive{}, ErrPaged110Keys
+		return detectedArchive{}, ErrPagedKeys
 	}
 	return detectedArchive{}, ErrBadSignature
 }
