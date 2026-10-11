@@ -143,7 +143,7 @@ func (s *ArchiveService) IndexStatus() IndexStatus {
 // RebuildSearchIndex starts an asynchronous forced rebuild. An existing ready
 // snapshot remains available to Search while the replacement is prepared.
 func (s *ArchiveService) RebuildSearchIndex() (IndexStatus, error) {
-	log.Printf("[pvfine:index] forced rebuild requested")
+	developmentLog("[pvfine:index] forced rebuild requested")
 	s.c.mu.RLock()
 	if s.c.archive == nil {
 		s.c.mu.RUnlock()
@@ -240,7 +240,7 @@ func (s *ArchiveService) ListDescendantFiles(scopePath string) ([]*TreeNode, err
 		archive := s.c.archive
 		s.c.mu.RUnlock()
 		descendantsStartedAt := time.Now()
-		log.Printf("[pvfine:index] descendants scan started: scope=%s", scopePath)
+		developmentLog("[pvfine:index] descendants scan started: scope=%s", scopePath)
 		result, err := index.descendants(scopePath)
 		if err != nil {
 			log.Printf("[pvfine:index] descendants scan failed: scope=%s elapsed=%s error=%v", scopePath, time.Since(descendantsStartedAt).Round(time.Millisecond), err)
@@ -267,7 +267,7 @@ func (s *ArchiveService) ListDescendantFiles(scopePath string) ([]*TreeNode, err
 			}
 			s.c.mu.RUnlock()
 		}
-		log.Printf("[pvfine:index] descendants scan finished: scope=%s rows=%d elapsed=%s", scopePath, len(result), time.Since(descendantsStartedAt).Round(time.Millisecond))
+		developmentLog("[pvfine:index] descendants scan finished: scope=%s rows=%d elapsed=%s", scopePath, len(result), time.Since(descendantsStartedAt).Round(time.Millisecond))
 		return result, nil
 	}
 	defer s.c.mu.RUnlock()
@@ -757,7 +757,7 @@ func (s *ArchiveService) SearchExact(query string, cursor int, limit int) (*Sear
 }
 
 func (s *ArchiveService) search(query string, cursor int, limit int, exact bool) (*SearchResult, error) {
-	return s.searchScoped(query, cursor, limit, exact, false, "")
+	return s.searchScoped(query, cursor, limit, exact, false, "", "")
 }
 
 // SearchItems searches only registered equipment and stackable items. Filtering
@@ -801,7 +801,7 @@ func (s *ArchiveService) SearchItems(query string, cursor int, limit int) (*Sear
 	if exact != nil && firstPage {
 		limit--
 	}
-	result, err := s.searchScoped(query, rawCursor, limit, false, true, excludeID)
+	result, err := s.searchScoped(query, rawCursor, limit, false, true, excludeID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -822,7 +822,7 @@ func (s *ArchiveService) SearchItems(query string, cursor int, limit int) (*Sear
 	return result, nil
 }
 
-func (s *ArchiveService) searchScoped(query string, cursor int, limit int, exact, itemsOnly bool, excludeID string) (*SearchResult, error) {
+func (s *ArchiveService) searchScoped(query string, cursor int, limit int, exact, itemsOnly bool, excludeID, scope string) (*SearchResult, error) {
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()
 	res := &SearchResult{Hits: []*SearchHit{}, NextCursor: -1}
@@ -836,7 +836,7 @@ func (s *ArchiveService) searchScoped(query string, cursor int, limit int, exact
 		if s.c.indexStatus.State == IndexStateError {
 			return nil, errors.New(s.c.indexStatus.Error)
 		}
-		result, err := s.c.diskIndex.searchScoped(query, cursor, limit, exact, itemsOnly, excludeID)
+		result, err := s.c.diskIndex.searchScoped(query, cursor, limit, exact, itemsOnly, excludeID, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -872,6 +872,9 @@ func (s *ArchiveService) searchScoped(query string, cursor int, limit int, exact
 	i := cursor
 	for ; i < len(records) && len(res.Hits) < limit; i++ {
 		record := &records[i]
+		if !advancedPathInScope(record.hit.Path, scope) {
+			continue
+		}
 		if excludeID != "" && record.hit.ID == excludeID {
 			continue
 		}
