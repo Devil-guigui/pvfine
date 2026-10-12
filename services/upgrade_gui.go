@@ -20,7 +20,17 @@ type UpgradeRow struct {
 }
 
 type UpgradeDocument struct {
-	Rows []UpgradeRow `json:"rows"`
+	Rows      []UpgradeRow     `json:"rows"`
+	SafeRows  []SafeUpgradeRow `json:"safeRows"`
+	SafeIssue string           `json:"safeIssue"`
+}
+
+// SafeUpgradeRow preserves eight source fields. Column 2 is failure probability
+// with denominator 100000; 3 is correction, 5/6 are material ID/count, 7 is gold.
+// Columns 1/4 remain unidentified and are preserved by GUI edits.
+type SafeUpgradeRow struct {
+	Fields   []SkillNumber `json:"fields"`
+	CostName string        `json:"costName"`
 }
 
 func isUpgradePath(path string) bool {
@@ -51,14 +61,28 @@ func (s *FileGUIService) ReadUpgrade(fileIndex int32, text string) (*UpgradeDocu
 	if err != nil {
 		return nil, err
 	}
-	for i := range doc.Rows {
-		row := &doc.Rows[i]
-		id := strconv.FormatInt(int64(row.Fields[3].Value), 10)
+	names := make(map[string]string)
+	resolveCostName := func(value float64) string {
+		id := strconv.FormatInt(int64(value), 10)
+		if name, ok := names[id]; ok {
+			return name
+		}
+		name := ""
 		if s.c.annotationEngine != nil {
 			if ref, ok := s.c.resolveAnnotationReferenceLocked("物品", id); ok {
-				row.CostName = resolvePreviewText(a, ref.Name)
+				name = resolvePreviewText(a, ref.Name)
 			}
 		}
+		names[id] = name
+		return name
+	}
+	for i := range doc.Rows {
+		row := &doc.Rows[i]
+		row.CostName = resolveCostName(row.Fields[3].Value)
+	}
+	for i := range doc.SafeRows {
+		row := &doc.SafeRows[i]
+		row.CostName = resolveCostName(row.Fields[5].Value)
 	}
 	return doc, nil
 }
@@ -90,6 +114,10 @@ func parseUpgrade(text, tableType string) (*UpgradeDocument, error) {
 		return nil, fmt.Errorf("[table] 每级需要 %d 个数值，当前共 %d 项", width, len(values))
 	}
 	doc := &UpgradeDocument{Rows: []UpgradeRow{}}
+	doc.SafeRows, err = parseSafeUpgrade(text)
+	if err != nil {
+		doc.SafeIssue = err.Error()
+	}
 	limit := len(values) / width
 	// The legacy editor exposes 31 rows. Typed tables expose every level.
 	if !typed && limit > 31 {
@@ -122,4 +150,45 @@ func parseUpgrade(text, tableType string) (*UpgradeDocument, error) {
 		doc.Rows = append(doc.Rows, row)
 	}
 	return doc, nil
+}
+
+func parseSafeUpgrade(text string) ([]SafeUpgradeRow, error) {
+	rows := []SafeUpgradeRow{}
+	values := []SkillNumber{}
+	sections := 0
+	for _, e := range pvf.ParseScriptView(text).Elements {
+		if e.Kind == pvf.ScriptElementSection && len(e.SectionPath) > 1 && e.SectionPath[0] == "safe upgrade" {
+			return rows, fmt.Errorf("[safe upgrade] 包含未知子 section")
+		}
+		if e.Kind == pvf.ScriptElementSection && e.Section == "safe upgrade" {
+			sections++
+			if len(e.SectionPath) != 1 {
+				return rows, fmt.Errorf("[safe upgrade] 必须位于顶层")
+			}
+		}
+		if e.Kind != pvf.ScriptElementToken || e.Section != "safe upgrade" {
+			continue
+		}
+		n, err := strconv.ParseInt(e.Value, 10, 32)
+		if err != nil || e.TokenType != 0 {
+			return rows, fmt.Errorf("[safe upgrade] 字段必须是 32 位整数")
+		}
+		values = append(values, SkillNumber{Value: float64(n), Start: e.Start, End: e.End, TokenType: e.TokenType})
+	}
+	if sections == 0 {
+		return rows, nil
+	}
+	if sections != 1 {
+		return rows, fmt.Errorf("存在多个 [safe upgrade]，无法确定数据结构")
+	}
+	if len(values) == 0 || len(values)%8 != 0 {
+		return rows, fmt.Errorf("[safe upgrade] 每条需要 8 项，当前共 %d 项", len(values))
+	}
+	for offset := 0; offset < len(values); offset += 8 {
+		if values[offset+2].Value < 0 || values[offset+2].Value > 100000 {
+			return []SafeUpgradeRow{}, fmt.Errorf("[safe upgrade] 第 %d 条失败率必须位于 0～100000", offset/8+1)
+		}
+		rows = append(rows, SafeUpgradeRow{Fields: append([]SkillNumber(nil), values[offset:offset+8]...)})
+	}
+	return rows, nil
 }

@@ -1,4 +1,4 @@
-import type { UpgradeRow } from "../../bindings/pvfine/services/models";
+import type { SafeUpgradeRow, UpgradeRow } from "../../bindings/pvfine/services/models";
 import { editSkillNumbers } from "./skill";
 
 export const upgradeGroupLabels = { T1: "武器", T2: "防具" } as const;
@@ -25,9 +25,30 @@ export function editUpgrade(text: string, rows: UpgradeRow[], column: number, va
 
 export interface UpgradeChange { column: number; value: number }
 
-export function upgradeRange(rows: UpgradeRow[], range: [number, number]): UpgradeRow[] {
-  if (!range.every(Number.isInteger) || range[0] < 1 || range[1] < range[0]) throw new Error("等级范围无效");
+export function upgradeRange(rows: UpgradeRow[], range: [number, number], minimum = 1): UpgradeRow[] {
+  if (!range.every(Number.isInteger) || range[0] < minimum || range[1] < range[0]) throw new Error("等级范围无效");
   return rows.filter(row => row.level >= range[0] && row.level <= range[1]);
+}
+
+/** Keep the two hidden columns and the original level outside the editable projection. */
+export function safeUpgradeRows(rows: SafeUpgradeRow[]): UpgradeRow[] {
+  return rows.map(row => {
+    if (row.fields?.length !== 8) throw new Error("安全强化数据不完整");
+    return { level: row.fields[0]!.value + 1, fields: [2, 3, 7, 5, 6].map(column => row.fields![column]!), fieldsT2: [], costName: row.costName };
+  });
+}
+
+export function editSafeUpgradeBatch(text: string, rows: UpgradeRow[], changes: UpgradeChange[]): string {
+  if (!rows.length || !changes.length) throw new Error("请选择等级和修改项");
+  const patches = changes.flatMap(({ column, value }) => {
+    if (!Number.isInteger(column) || column < 0 || column > 4 || !Number.isFinite(value) || value < 0 || value > (column === 0 ? 100 : 2147483647) || (column !== 0 && !Number.isInteger(value))) throw new Error("安全强化数值超出允许范围");
+    return rows.map(row => {
+      const token = row.fields?.[column];
+      if (!token || token.tokenType !== 0) throw new Error("安全强化数据已失效");
+      return { token, value: column === 0 ? Math.round(value * 1000) : value };
+    });
+  });
+  return applyUpgradePatches(text, patches);
 }
 
 /** Validate the complete batch before publishing one source patch. */
@@ -50,7 +71,12 @@ export function editUpgradeBatch(text: string, rows: UpgradeRow[], changes: Upgr
       }
       return edits;
     });
-  }).sort((a, b) => b.token.start - a.token.start);
+  });
+  return applyUpgradePatches(text, patches);
+}
+
+function applyUpgradePatches(text: string, patches: { token: NonNullable<UpgradeRow["fields"]>[number]; value: number }[]): string {
+  patches = patches.sort((a, b) => b.token.start - a.token.start);
   let result = text;
   let previous = Infinity;
   for (const patch of patches) {

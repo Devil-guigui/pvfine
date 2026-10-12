@@ -628,6 +628,16 @@ export interface RenderingReloadResult {
     "ruleCount": number;
 }
 
+/**
+ * SafeUpgradeRow preserves eight source fields. Column 2 is failure probability
+ * with denominator 100000; 3 is correction, 5/6 are material ID/count, 7 is gold.
+ * Columns 1/4 remain unidentified and are preserved by GUI edits.
+ */
+export interface SafeUpgradeRow {
+    "fields": SkillNumber[] | null;
+    "costName": string;
+}
+
 export interface ScriptApplyResult {
     "appliedFiles": number;
     "fileIndexes": number[] | null;
@@ -1027,6 +1037,8 @@ export interface TreeTag {
 
 export interface UpgradeDocument {
     "rows": UpgradeRow[] | null;
+    "safeRows": SafeUpgradeRow[] | null;
+    "safeIssue": string;
 }
 
 /**

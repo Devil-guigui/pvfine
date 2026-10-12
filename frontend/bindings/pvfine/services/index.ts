@@ -98,6 +98,7 @@ export type {
     PreviewIssue,
     RecoveryInfo,
     RenderingReloadResult,
+    SafeUpgradeRow,
     ScriptApplyResult,
     ScriptCompileResult,
     ScriptDiagnostic,

@@ -4,7 +4,7 @@ import { NButton, NButtonGroup, NCheckbox, NEmpty, NInputNumber, NModal, NSelect
 import { FileGUIService } from "../../../bindings/pvfine/services";
 import type { UpgradeDocument, UpgradeRow } from "../../../bindings/pvfine/services/models";
 import type { GUIFile } from "../../gui/types";
-import { editUpgrade, editUpgradeBatch, upgradeRange, type UpgradeChange, upgradeGroupLabels, upgradeRows, upgradeSuccessRate } from "../../gui/upgrade";
+import { editUpgrade, editUpgradeBatch, editSafeUpgradeBatch, safeUpgradeRows, upgradeRange, type UpgradeChange, upgradeGroupLabels, upgradeRows, upgradeSuccessRate } from "../../gui/upgrade";
 import { useEditorStore } from "../../stores/editor";
 import { useFileGUIStore } from "../../stores/fileGUI";
 import ItemPicker from "../ItemPicker.vue";
@@ -17,35 +17,43 @@ const document = ref<UpgradeDocument | null>(null);
 const loading = ref(false);
 const error = ref("");
 const sourceText = ref("");
+const section = ref<"normal" | "safe">("normal");
+const safeRows = computed(() => document.value?.safeRows ?? []);
+const safeLabels = ["失败率（%）", "失败补正（原始值）", "金币消耗", "消耗道具", "消耗数量"];
+const safeEditableRows = computed(() => safeUpgradeRows(safeRows.value));
+const hasSafe = computed(() => safeRows.value.length > 0 || !!document.value?.safeIssue);
 const group = ref<"T1" | "T2">("T1");
 const hasT2 = computed(() => !!document.value?.rows?.[0]?.fieldsT2?.length);
 const rows = computed(() => upgradeRows(document.value?.rows ?? [], hasT2.value ? group.value : "T1"));
+const activeRows = computed(() => section.value === "safe" ? safeEditableRows.value : rows.value);
 let generation = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 const title = computed(() => props.file.path.toLowerCase().includes("amplifyupgrade") ? "增幅概率" : "强化概率");
+const safeTitle = computed(() => title.value === "增幅概率" ? "安全增幅" : "安全强化");
 const ready = computed(() => !loading.value && !error.value && sourceText.value === props.file.text);
-const canEdit = computed(() => ready.value && props.file.editable && !editor.saving && !editor.guiApplying);
+const canEdit = computed(() => (section.value === "normal" || (!document.value?.safeIssue && safeEditableRows.value.length > 0)) && ready.value && props.file.editable && !editor.saving && !editor.guiApplying);
 const dirty = computed(() => {
   const tab = editor.getFileDraft(props.file.index);
   return !!tab && tab.path === props.file.path && editor.isTextDirty(tab);
 });
 const operations = [{ label: "不处理", value: 1 }, { label: "降级", value: 2 }, { label: "损坏", value: 3 }];
 const labels = ["成功率（%）", "失败操作", "降级等级", "消耗道具", "消耗数量"];
-const edit = reactive({ show: false, column: 0, value: null as number | null, itemID: "", name: "", rows: [] as UpgradeRow[], text: "", index: -1, epoch: 0 });
-const editTitle = computed(() => `${edit.rows.length > 1 ? '全部等级' : `+${edit.rows[0]?.level ?? 1}`} · ${hasT2.value && edit.column < 3 ? `${upgradeGroupLabels[group.value]} · ` : ''}${labels[edit.column]}`);
+const edit = reactive({ show: false, safe: false, column: 0, value: null as number | null, itemID: "", name: "", rows: [] as UpgradeRow[], text: "", index: -1, epoch: 0 });
+const editTitle = computed(() => `+${edit.rows[0]?.level ?? 1} · ${!edit.safe && hasT2.value && edit.column < 3 ? `${upgradeGroupLabels[group.value]} · ` : ''}${(edit.safe ? safeLabels : labels)[edit.column]}`);
 
-const batch = reactive({ show: false, range: [1, 1] as [number, number], rows: [] as UpgradeRow[], text: "", index: -1, epoch: 0,
+const batch = reactive({ show: false, safe: false, range: [1, 1] as [number, number], rows: [] as UpgradeRow[], text: "", index: -1, epoch: 0,
   rateEnabled: false, rate: null as number | null, failureEnabled: false, failure: 1, downgrade: 0 as number | null,
-  itemEnabled: false, itemID: "", countEnabled: false, count: null as number | null });
+  itemEnabled: false, itemID: "", itemName: "", countEnabled: false, count: null as number | null, correctionEnabled: false, correction: null as number | null, goldEnabled: false, gold: null as number | null });
 const batchTargets = computed(() => upgradeRange(batch.rows, batch.range));
+const batchMin = computed(() => batch.rows[0]?.level ?? 1);
 const batchMax = computed(() => batch.rows.at(-1)?.level ?? 1);
-const batchSelected = computed(() => batch.rateEnabled || batch.failureEnabled || batch.itemEnabled || batch.countEnabled);
+const batchSelected = computed(() => batch.rateEnabled || (!batch.safe && batch.failureEnabled) || batch.itemEnabled || batch.countEnabled || (batch.safe && (batch.correctionEnabled || batch.goldEnabled)));
 function openBatch() {
-  if (!canEdit.value || !rows.value.length) return;
-  const first = rows.value[0]!;
-  Object.assign(batch, { show: true, range: [1, rows.value.at(-1)!.level], rows: rows.value, text: props.file.text, index: props.file.index, epoch: gui.epoch,
-    rateEnabled: false, rate: upgradeSuccessRate(first), failureEnabled: false, failure: first.fields?.[1]?.value ?? 1, downgrade: first.fields?.[2]?.value ?? 0,
-    itemEnabled: false, itemID: String(first.fields?.[3]?.value ?? 0), countEnabled: false, count: first.fields?.[4]?.value ?? 0 });
+  if (!canEdit.value || !activeRows.value.length) return;
+  const first = activeRows.value[0]!;
+  Object.assign(batch, { show: true, safe: section.value === "safe", range: [first.level, activeRows.value.at(-1)!.level], rows: activeRows.value, text: props.file.text, index: props.file.index, epoch: gui.epoch,
+    rateEnabled: false, rate: section.value === "safe" ? first.fields![0]!.value / 1000 : upgradeSuccessRate(first), failureEnabled: false, failure: first.fields?.[1]?.value ?? 1, downgrade: first.fields?.[2]?.value ?? 0,
+    itemEnabled: false, itemID: String(first.fields?.[3]?.value ?? 0), itemName: first.costName, countEnabled: false, count: first.fields?.[4]?.value ?? 0, correctionEnabled: false, correction: first.fields?.[1]?.value ?? 0, goldEnabled: false, gold: first.fields?.[2]?.value ?? 0 });
 }
 function applyBatch() {
   if (!canEdit.value || !batchSelected.value) return;
@@ -54,10 +62,12 @@ function applyBatch() {
     const changes: UpgradeChange[] = [];
     const add = (column: number, value: number | null) => { if (value === null) throw new Error("请输入有效数值"); changes.push({ column, value }); };
     if (batch.rateEnabled) add(0, batch.rate);
-    if (batch.failureEnabled) { add(1, batch.failure); if (batch.failure === 2) add(2, batch.downgrade); }
+    if (!batch.safe && batch.failureEnabled) { add(1, batch.failure); if (batch.failure === 2) add(2, batch.downgrade); }
     if (batch.itemEnabled) add(3, batch.itemID.trim() ? Number(batch.itemID) : NaN);
     if (batch.countEnabled) add(4, batch.count);
-    const text = editUpgradeBatch(batch.text, batchTargets.value, changes);
+    if (batch.safe && batch.correctionEnabled) add(1, batch.correction);
+    if (batch.safe && batch.goldEnabled) add(2, batch.gold);
+    const text = (batch.safe ? editSafeUpgradeBatch : editUpgradeBatch)(batch.text, batchTargets.value, changes);
     editor.updateContent(props.file.index, text);
     batch.show = false;
     message.success(`已更新 ${batchTargets.value.length} 个等级的草稿`);
@@ -88,15 +98,17 @@ watch(() => [props.file.index, props.file.text, gui.epoch, gui.revision, props.a
   if (props.active) timer = setTimeout(load, 80);
 }, { immediate: true });
 watch(() => gui.epoch, () => { document.value = null; });
+watch(hasSafe, (present) => { if (!present) section.value = "normal"; });
+watch(section, () => { edit.show = false; batch.show = false; });
 watch(group, () => { edit.show = false; batch.show = false; });
 onBeforeUnmount(() => { generation++; clearTimeout(timer); });
 
 function openEdit(column: number, row?: UpgradeRow) {
   if (!canEdit.value) return;
-  const targets = row ? [row] : rows.value;
+  const targets = row ? [row] : activeRows.value;
   if (!targets.length) return;
   const first = targets[0]!;
-  Object.assign(edit, { show: true, column, rows: targets, value: column === 0 ? upgradeSuccessRate(first) : first.fields?.[column]!.value,
+  Object.assign(edit, { show: true, safe: section.value === "safe", column, rows: targets, value: column === 0 ? (section.value === "safe" ? first.fields![0]!.value / 1000 : upgradeSuccessRate(first)) : first.fields?.[column]!.value,
     itemID: String(first.fields?.[3]!.value), name: first.costName, text: props.file.text, index: props.file.index, epoch: gui.epoch });
 }
 function apply() {
@@ -105,7 +117,7 @@ function apply() {
     if (edit.text !== props.file.text || edit.index !== props.file.index || edit.epoch !== gui.epoch) throw new Error("文件已变化，请重新打开表单");
     const value = edit.column === 3 ? (edit.itemID.trim() ? Number(edit.itemID) : NaN) : edit.value;
     if (value === null) throw new Error("请输入有效数值");
-    const text = editUpgrade(edit.text, edit.rows, edit.column, value);
+    const text = edit.safe ? editSafeUpgradeBatch(edit.text, edit.rows, [{ column: edit.column, value }]) : editUpgrade(edit.text, edit.rows, edit.column, value);
     editor.updateContent(props.file.index, text);
     edit.show = false;
     message.success("已更新草稿，保存后写入工作区");
@@ -124,13 +136,19 @@ async function save() {
 <template>
   <div class="upgrade-viewer">
     <header class="upgrade-header">
-      <div class="upgrade-heading"><h2>{{ title }}</h2><span class="upgrade-count">{{ rows.length }} 个等级</span></div>
+      <div class="upgrade-heading"><h2>{{ section === 'safe' ? safeTitle : title }}</h2><span class="upgrade-count">{{ section === 'safe' ? `${safeRows.length} 条记录` : `${rows.length} 个等级` }}</span></div>
       <div class="upgrade-actions">
         <NButton size="small" :disabled="!canEdit || edit.show || batch.show" @click="openBatch">批量设置</NButton>
-        <NButton size="small" type="primary" :loading="editor.saving" :disabled="!canEdit || !dirty || edit.show || batch.show" @click="save">保存{{ title.startsWith('增幅') ? '增幅' : '强化' }}</NButton>
+        <NButton size="small" type="primary" :loading="editor.saving" :disabled="!canEdit || !dirty || edit.show || batch.show" @click="save">保存{{ section === 'safe' ? safeTitle : title.startsWith('增幅') ? '增幅' : '强化' }}</NButton>
       </div>
     </header>
-    <div v-if="hasT2" class="upgrade-group-bar">
+    <div v-if="hasSafe" class="upgrade-group-bar">
+      <NButtonGroup size="small" aria-label="强化方式">
+        <NButton :type="section === 'normal' ? 'primary' : 'default'" :aria-pressed="section === 'normal'" :disabled="loading || edit.show || batch.show" @click="section = 'normal'">{{ title }}</NButton>
+        <NButton :type="section === 'safe' ? 'primary' : 'default'" :aria-pressed="section === 'safe'" :disabled="loading || edit.show || batch.show" @click="section = 'safe'">{{ safeTitle }}</NButton>
+      </NButtonGroup>
+    </div>
+    <div v-if="hasT2 && section === 'normal'" class="upgrade-group-bar">
       <NButtonGroup size="small" aria-label="装备类型">
         <NButton v-for="g in (['T1', 'T2'] as const)" :key="g" :type="group === g ? 'primary' : 'default'" :aria-pressed="group === g" :disabled="loading || edit.show || batch.show" @click="group = g">{{ upgradeGroupLabels[g] }}</NButton>
       </NButtonGroup>
@@ -138,7 +156,17 @@ async function save() {
     </div>
     <div v-if="error" class="error" role="alert">{{ error }} <NButton size="small" @click="load">重新加载</NButton></div>
     <NSpin :show="loading">
-      <div v-if="document?.rows?.length" class="table-scroll">
+      <template v-if="section === 'safe'">
+        <p class="upgrade-hint safe-upgrade-hint">失败率分母为 100000；失败补正按原始值编辑。</p>
+        <div v-if="document?.safeIssue" class="error" role="alert">{{ document.safeIssue }}</div>
+        <div v-if="safeRows.length" class="table-scroll">
+          <table class="upgrade-table safe-upgrade-table">
+            <thead><tr><th>等级</th><th v-for="column in [0, 1, 3, 4, 2]" :key="column">{{ safeLabels[column] }}</th></tr></thead>
+            <tbody><tr v-for="(row, index) in safeEditableRows" :key="index"><th>+{{ row.level }}</th><td v-for="column in [0, 1, 3, 4, 2]" :key="column"><button :class="['upgrade-cell', { 'upgrade-material': column === 3 }]" :disabled="!canEdit" :title="column === 0 ? `原始失败率：${row.fields?.[0]?.value} / 100000` : undefined" @click="openEdit(column, row)"><template v-if="column === 3"><span>{{ row.costName || '物品' }}</span><small>#{{ row.fields?.[3]?.value }}</small></template><template v-else>{{ column === 0 ? `${Number(((row.fields?.[0]?.value ?? 0) / 1000).toFixed(3))}%` : row.fields?.[column]?.value }}</template></button></td></tr></tbody>
+          </table>
+        </div>
+      </template>
+      <div v-else-if="document?.rows?.length" class="table-scroll">
         <table class="upgrade-table">
           <colgroup><col class="level-column" /><col class="rate-column" /><col class="operation-column" /><col class="downgrade-column" /><col /><col class="count-column" /></colgroup>
           <thead><tr><th>等级</th><th v-for="label in labels" :key="label">{{ label }}</th></tr></thead>
@@ -154,34 +182,39 @@ async function save() {
       </div>
       <NEmpty v-else-if="!loading && !error" description="没有可编辑的强化/增幅数据" />
     </NSpin>
-    <NModal v-model:show="batch.show" preset="card" :title="`批量设置 · ${title} · ${upgradeGroupLabels[group]}`" style="width: 580px; max-width: 95vw" :mask-closable="false">
+    <NModal v-model:show="batch.show" preset="card" :title="batch.safe ? `批量设置 · ${safeTitle}` : `批量设置 · ${title} · ${upgradeGroupLabels[group]}`" style="width: 580px; max-width: 95vw" :mask-closable="false">
       <div class="upgrade-batch-form">
         <section class="upgrade-range">
           <div class="upgrade-range-heading"><strong>等级范围</strong><span>+{{ batch.range[0] }} ～ +{{ batch.range[1] }} · {{ batchTargets.length }} 个等级</span></div>
-          <NSlider v-model:value="batch.range" range :min="1" :max="batchMax" :step="1" :disabled="!canEdit || batchMax === 1" />
+          <NSlider v-model:value="batch.range" range :min="batchMin" :max="batchMax" :step="1" :disabled="!canEdit || batchMax === batchMin" />
           <div class="upgrade-range-inputs">
-            <NInputNumber :value="batch.range[0]" :min="1" :max="batch.range[1]" :precision="0" :disabled="!canEdit" aria-label="起始等级" @update:value="batch.range[0] = $event ?? 1" />
+            <NInputNumber :value="batch.range[0]" :min="batchMin" :max="batch.range[1]" :precision="0" :disabled="!canEdit" aria-label="起始等级" @update:value="batch.range[0] = $event ?? batchMin" />
             <span>至</span>
             <NInputNumber :value="batch.range[1]" :min="batch.range[0]" :max="batchMax" :precision="0" :disabled="!canEdit" aria-label="结束等级" @update:value="batch.range[1] = $event ?? batchMax" />
           </div>
         </section>
         <div class="upgrade-batch-row">
-          <NCheckbox v-model:checked="batch.rateEnabled" :disabled="!canEdit">成功率</NCheckbox>
+          <NCheckbox v-model:checked="batch.rateEnabled" :disabled="!canEdit">{{ batch.safe ? '失败率' : '成功率' }}</NCheckbox>
           <NInputNumber v-model:value="batch.rate" :min="0" :max="100" :precision="3" :disabled="!canEdit || !batch.rateEnabled"><template #suffix>%</template></NInputNumber>
         </div>
-        <div class="upgrade-batch-row">
+        <div v-if="!batch.safe" class="upgrade-batch-row">
           <NCheckbox v-model:checked="batch.failureEnabled" :disabled="!canEdit">失败操作</NCheckbox>
           <div class="upgrade-batch-failure"><NSelect v-model:value="batch.failure" :options="operations" :disabled="!canEdit || !batch.failureEnabled" /><label>降级等级<NInputNumber v-model:value="batch.downgrade" :min="0" :max="hasT2 ? 2147483647 : 31" :precision="0" :disabled="!canEdit || !batch.failureEnabled || batch.failure !== 2" /></label></div>
         </div>
         <div class="upgrade-batch-row">
           <NCheckbox v-model:checked="batch.itemEnabled" :disabled="!canEdit">消耗道具</NCheckbox>
-          <div class="upgrade-batch-item"><NInputNumber :value="batch.itemID.trim() ? Number(batch.itemID) : null" :min="0" :max="2147483647" :precision="0" :disabled="!canEdit || !batch.itemEnabled" placeholder="道具 ID" @update:value="batch.itemID = $event === null ? '' : String($event)" /><ItemPicker v-model="batch.itemID" :disabled="!canEdit || !batch.itemEnabled" /></div>
+          <div class="upgrade-batch-item"><NInputNumber :value="batch.itemID.trim() ? Number(batch.itemID) : null" :min="0" :max="2147483647" :precision="0" :disabled="!canEdit || !batch.itemEnabled" placeholder="道具 ID" @update:value="batch.itemID = $event === null ? '' : String($event); batch.itemName = ''" /><ItemPicker v-model="batch.itemID" :label="batch.itemName" :disabled="!canEdit || !batch.itemEnabled" @select="batch.itemName = $event?.name ?? ''" /></div>
         </div>
         <div class="upgrade-batch-row">
           <NCheckbox v-model:checked="batch.countEnabled" :disabled="!canEdit">消耗数量</NCheckbox>
           <NInputNumber v-model:value="batch.count" :min="0" :max="2147483647" :precision="0" :disabled="!canEdit || !batch.countEnabled" />
         </div>
-        <p class="upgrade-hint">只修改勾选项。概率与失败处理作用于当前{{ upgradeGroupLabels[group] }}；道具与数量由武器、防具共用。</p>
+        <template v-if="batch.safe">
+          <div class="upgrade-batch-row"><NCheckbox v-model:checked="batch.correctionEnabled" :disabled="!canEdit">失败补正</NCheckbox><NInputNumber v-model:value="batch.correction" :min="0" :max="2147483647" :precision="0" :disabled="!canEdit || !batch.correctionEnabled" /></div>
+          <div class="upgrade-batch-row"><NCheckbox v-model:checked="batch.goldEnabled" :disabled="!canEdit">金币消耗</NCheckbox><NInputNumber v-model:value="batch.gold" :min="0" :max="2147483647" :precision="0" :disabled="!canEdit || !batch.goldEnabled" /></div>
+        </template>
+        <p v-if="batch.safe" class="upgrade-hint">只修改所选等级内的勾选项，失败补正按原始整数写入。</p>
+        <p v-else class="upgrade-hint">只修改勾选项。概率与失败处理作用于当前{{ upgradeGroupLabels[group] }}；道具与数量由武器、防具共用。</p>
         <div class="upgrade-dialog-actions"><NButton @click="batch.show = false">取消</NButton><NButton type="primary" :disabled="!canEdit || !batchSelected || !batchTargets.length" @click="applyBatch">应用到 {{ batchTargets.length }} 个等级</NButton></div>
       </div>
     </NModal>
@@ -192,9 +225,9 @@ async function save() {
           <ItemPicker v-model="edit.itemID" :label="edit.name" :disabled="!canEdit" @select="edit.name = $event?.name ?? ''" />
           <p v-if="edit.rows.length > 1">将替换 {{ edit.rows.length }} 个等级的消耗道具，数量保持不变。</p>
         </template>
-        <NSelect v-else-if="edit.column === 1" v-model:value="edit.value" :options="operations" :disabled="!canEdit" />
-        <NInputNumber v-else v-model:value="edit.value" :min="0" :max="edit.column === 0 ? 100 : edit.column === 2 && !hasT2 ? 31 : 2147483647" :precision="edit.column === 0 ? 3 : 0" :disabled="!canEdit" />
-        <p v-if="edit.column === 1">选择不处理或损坏时，降级参数自动清零。</p>
+        <NSelect v-else-if="!edit.safe && edit.column === 1" v-model:value="edit.value" :options="operations" :disabled="!canEdit" />
+        <NInputNumber v-else v-model:value="edit.value" :min="0" :max="edit.column === 0 ? 100 : edit.column === 2 && !edit.safe && !hasT2 ? 31 : 2147483647" :precision="edit.column === 0 ? 3 : 0" :disabled="!canEdit" />
+        <p v-if="!edit.safe && edit.column === 1">选择不处理或损坏时，降级参数自动清零。</p>
         <div class="upgrade-dialog-actions"><NButton @click="edit.show = false">取消</NButton><NButton type="primary" :disabled="!canEdit" @click="apply">应用到草稿</NButton></div>
       </div>
     </NModal>
@@ -232,6 +265,9 @@ async function save() {
 .edit-form { display: grid; gap: 14px; }
 .edit-form label { display: grid; gap: 6px; }
 .edit-form p { margin: 0; color: var(--pvf-text-secondary); font-size: 12px; line-height: 1.6; }
+.safe-upgrade-table { min-width: 700px; table-layout: auto; }
+.safe-upgrade-table tbody td { user-select: text; white-space: nowrap; }
+.safe-upgrade-hint { line-height: 1.6; margin: 4px 0 12px; }
 .upgrade-batch-form { display: grid; gap: 16px; }
 .upgrade-range { padding: 12px 14px; background: var(--pvf-surface-inset); border-radius: 4px; }
 .upgrade-range-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; font-size: 13px; }
