@@ -753,6 +753,21 @@ export const useEditorStore = defineStore("editor", () => {
     return true;
   }
 
+  /** 工具菜单与文件 GUI 共用同一标签，保留已打开文件的草稿。 */
+  async function openUpgrade(amplify = false, requestedPaneId?: EditorPaneId): Promise<boolean> {
+    const targetPaneId = resolvePaneId(requestedPaneId);
+    const path = amplify ? "etc/amplifyupgrade.etc" : "etc/upgrade.etc";
+    const nodes = await ArchiveService.ResolveFiles([path]);
+    const target = nodes?.find((node) => node && !node.isDir && node.fileIndex >= 0);
+    if (!target) throw new Error(`归档中未找到${amplify ? '增幅' : '强化'}文件 ${path}`);
+    await openFile(target.fileIndex, targetPaneId);
+    const tab = tabs.value.find((tab) => tab.index === target.fileIndex);
+    if (!tab) return false;
+    if (tab.loadError) throw new Error(tab.loadError);
+    setGUIMode(target.fileIndex, "gui", targetPaneId);
+    return true;
+  }
+
   /** 把单个标签的本地文本写入后端 overlay,成功后重置脏基线。 */
   async function saveTab(index: number): Promise<boolean> {
     const tab = getFileDraft(index);
@@ -1182,6 +1197,7 @@ export const useEditorStore = defineStore("editor", () => {
     setPlaceholderText,
     saveTab,
     saveFileTab,
+    openUpgrade,
     saveActiveTab,
     saveAllDirty,
     save,

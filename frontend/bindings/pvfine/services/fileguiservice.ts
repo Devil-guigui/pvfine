@@ -54,6 +54,10 @@ export function ReadSkill(fileIndex: number, text: string): $CancellablePromise<
     return $Call.ByID(3027074897, fileIndex, text);
 }
 
+export function ReadUpgrade(fileIndex: number, text: string): $CancellablePromise<$models.UpgradeDocument | null> {
+    return $Call.ByID(4242154256, fileIndex, text);
+}
+
 /**
  * ReadWorldDrop parses the caller's current editor draft, then resolves names
  * against the archive's item relation index. Unknown IDs remain editable.

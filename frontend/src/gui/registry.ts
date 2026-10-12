@@ -34,6 +34,13 @@ const providers: GUIProvider[] = [
     matches: (file) => file.path.toLowerCase().endsWith(".qst"),
     component: defineAsyncComponent(() => import("../components/gui/QuestViewer.vue")),
   },
+  {
+    id: "upgrade",
+    label: "强化/增幅",
+    readOnly: false,
+    matches: (file) => ["etc/upgrade.etc", "etc/amplifyupgrade.etc"].includes(normalizePath(file.path)),
+    component: defineAsyncComponent(() => import("../components/gui/UpgradeViewer.vue")),
+  },
 ];
 
 export function getGUIProvider(file: GUIFile): GUIProvider | null {

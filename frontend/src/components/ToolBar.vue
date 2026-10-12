@@ -125,6 +125,16 @@ const toolOptions = computed(() => [
     disabled: !archive.open,
     icon: () => h(NIcon, null, { default: () => h(Code24Regular) }),
   },
+  {
+    label: "强化/增幅概率",
+    key: "upgrade-tools",
+    disabled: !archive.open,
+    icon: () => h(NIcon, null, { default: () => h(Code24Regular) }),
+    children: [
+      { label: "强化概率", key: "upgrade", disabled: !archive.open },
+      { label: "增幅概率", key: "amplify-upgrade", disabled: !archive.open },
+    ],
+  },
 ]);
 watch(
   () => archive.unpackMessage,
@@ -253,6 +263,12 @@ function onCancelUnpack() {
 }
 
 async function onToolSelect(key: string): Promise<void> {
+  if (key === "upgrade" || key === "amplify-upgrade") {
+    if (!archive.open) { message.warning("需先打开 PVF 归档"); return; }
+    try { await editor.openUpgrade(key === "amplify-upgrade"); }
+    catch (err: any) { message.error(`打开强化/增幅概率失败: ${err?.message ?? err}`); }
+    return;
+  }
   if (key === "skills") {
     skillBrowserVisible.value = true;
     return;

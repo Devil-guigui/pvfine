@@ -49,6 +49,27 @@ describe("world drop entry & editor store integration", () => {
     api.GetFileBasic.mockImplementation((index) => api.GetFile(index));
   });
 
+  it.each([false, true])("openUpgrade: 工具入口打开对应概率文件并复用已有草稿（增幅=%s）", async (amplify) => {
+    const path = amplify ? "etc/amplifyupgrade.etc" : "etc/upgrade.etc";
+    api.ResolveFiles.mockResolvedValue([{ name: path.split('/').at(-1), path, isDir: false, fileIndex: 30 }]);
+    api.GetFile.mockResolvedValue({ index: 30, path, text: "original", editable: true, dataType: 1, size: 8, tags: [], annotations: [], modified: false });
+    const store = useEditorStore();
+    await store.openFile(30);
+    store.updateContent(30, "概率编辑草稿");
+    expect(await store.openUpgrade(amplify)).toBe(true);
+    expect(api.ResolveFiles).toHaveBeenCalledWith([path]);
+    expect(store.tabs.filter(tab => tab.index === 30)).toHaveLength(1);
+    expect(store.activeTab?.text).toBe("概率编辑草稿");
+    expect(store.getGUIModes(store.activePaneId).entries.get(30)?.mode).toBe("gui");
+  });
+
+  it("openUpgrade: 缺失文件时清晰报错", async () => {
+    api.ResolveFiles.mockResolvedValue([]);
+    const store = useEditorStore();
+    await expect(store.openUpgrade()).rejects.toThrow("未找到强化文件 etc/upgrade.etc");
+    await expect(store.openUpgrade(true)).rejects.toThrow("未找到增幅文件 etc/amplifyupgrade.etc");
+  });
+
   it("saveFileTab: 保存指定技能，不受当前活动标签影响", async () => {
     api.GetFile.mockImplementation((index: number) => Promise.resolve({
       index, path: `skill/test/${index}.skl`, text: "original", editable: true,

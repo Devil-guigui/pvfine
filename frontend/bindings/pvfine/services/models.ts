@@ -1025,6 +1025,23 @@ export interface TreeTag {
     "rarity": number;
 }
 
+export interface UpgradeDocument {
+    "rows": UpgradeRow[] | null;
+}
+
+/**
+ * UpgradeRow exposes only the five editable columns. Level follows the source
+ * tool's row order. Fields holds weapon settings and shared materials;
+ * FieldsT2 holds armor probability, failure operation, and downgrade parameter.
+ * All other table parameters retain their source text.
+ */
+export interface UpgradeRow {
+    "level": number;
+    "fields": SkillNumber[] | null;
+    "fieldsT2": SkillNumber[] | null;
+    "costName": string;
+}
+
 /**
  * VersionChange is a path-level worktree or commit change.
  */

@@ -137,6 +137,8 @@ export type {
     TreeAnnotation,
     TreeNode,
     TreeTag,
+    UpgradeDocument,
+    UpgradeRow,
     VersionChange,
     VersionChangePage,
     VersionCommit,

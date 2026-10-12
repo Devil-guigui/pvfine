@@ -461,6 +461,9 @@ func (b *gojaBindings) fileObject(file *FileHandle) *goja.Object {
 		}
 		return goja.Undefined(), nil
 	})
+	_ = setFunction(b.vm, object, "editUpgrade", func(call goja.FunctionCall) (goja.Value, error) {
+		return b.editUpgrade(file, call)
+	})
 	_ = setFunction(b.vm, object, "parse", func(goja.FunctionCall) (goja.Value, error) {
 		document, err := file.Parse()
 		if err != nil {

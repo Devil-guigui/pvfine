@@ -119,6 +119,16 @@ export interface PVFDocument {
   ): PVFSection;
 }
 
+/** 按等级计算；current 为当前成功率（百分比）或道具数量。 */
+export type UpgradeCalculation = number | ((level: number, current: number) => number);
+export interface UpgradeEditOptions {
+  equipment?: "weapon" | "armor";
+  fromLevel?: number;
+  toLevel?: number;
+  successRate?: UpgradeCalculation;
+  costCount?: UpgradeCalculation;
+}
+
 export interface PVFFile {
   readonly index: number;
   readonly path: string;
@@ -127,6 +137,8 @@ export interface PVFFile {
 
   text(): string;
   setText(text: string): void;
+  /** 强化/增幅：校验所有结果后统一写入事务，返回范围内等级数量。 */
+  editUpgrade(options: UpgradeEditOptions): number;
   parse(): PVFDocument;
   write(document: PVFDocument): void;
 }
