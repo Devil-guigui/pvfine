@@ -26,7 +26,7 @@ func TestAnnotationServiceReloadRulesKeepsOldEngineOnFailure(t *testing.T) {
 	}
 	t.Cleanup(c.closeArchive)
 
-	rulesPath := filepath.Join(t.TempDir(), "annotations.json")
+	rulesPath := isolatedRulesPath(t)
 	valid := []byte(`{
 		"version": 1,
 		"relations": {},
@@ -799,7 +799,7 @@ func TestAnnotationVersionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(1)
-	rulesPath := filepath.Join(t.TempDir(), "annotations.json")
+	rulesPath := isolatedRulesPath(t)
 	service := newAnnotationService(c, rulesPath)
 	for _, version := range []string{"110US", "115US", "90US"} {
 		for i := range document.Rules {
@@ -922,7 +922,7 @@ func TestAnnotationVersionDiskReload(t *testing.T) {
 		}
 	}
 	check(1)
-	rulesPath := filepath.Join(t.TempDir(), "annotations.json")
+	rulesPath := isolatedRulesPath(t)
 	for _, version := range []string{"110US", "115US", "90US"} {
 		document.Rules[0].PVFVersions = []string{version}
 		data, err := annotationrules.Marshal(document)
@@ -940,5 +940,54 @@ func TestAnnotationVersionDiskReload(t *testing.T) {
 			want = 1
 		}
 		check(want)
+	}
+}
+
+// isolatedRulesPath creates an empty sibling paths.json so a temporary rule file
+// stays the complete rule set instead of inheriting the built-in path notes.
+func isolatedRulesPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "paths.json"), []byte(`{"version":1,"rules":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, "annotations.json")
+}
+
+func TestAnnotationServiceReloadMergesBuiltinPathNotes(t *testing.T) {
+	a := pvf.New()
+	mustAddText(t, a, "equipment/equipment.lst", "`a` `b`", pvf.TypeScript)
+	emptyEngine, err := annotationrules.Compile(annotationrules.Document{
+		Version: 1, Relations: map[string]annotationrules.RelationSpec{}, Rules: []annotationrules.Rule{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &core{annotationEngine: emptyEngine}
+	if err := c.setArchive(a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.closeArchive)
+
+	dir := t.TempDir()
+	rulesPath := filepath.Join(dir, "annotations.json")
+	if err := os.WriteFile(rulesPath, []byte(`{"version":1,"rules":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := newAnnotationService(c, rulesPath)
+	result, err := service.ReloadRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RuleCount < 1000 {
+		t.Fatalf("reload dropped the built-in path notes: %#v", result)
+	}
+	nodes, err := NewArchiveService(c).ListChildren("equipment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := findTreeNode(nodes, "equipment.lst")
+	if node == nil || len(node.Annotations) == 0 || node.Annotations[0].Title != "装备列表" {
+		t.Fatalf("path annotations = %#v", node)
 	}
 }

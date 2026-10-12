@@ -1,6 +1,7 @@
 package annotations
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -331,6 +332,58 @@ func TestAnnotatePathSupportsRecursiveGlobAndDirectories(t *testing.T) {
 	}
 	if len(engine.AnnotatePath("stackable/item.stk", false)) != 0 {
 		t.Fatal("unrelated file should not match")
+	}
+}
+
+func TestAnnotatePathIndexMatchesFullScanInRuleOrder(t *testing.T) {
+	engine := testEngine(t,
+		Rule{ID: "deep", Match: MatchSpec{Glob: "a/b/**"}, Target: TargetSpec{Kind: "path"}, Annotation: AnnotationSpec{Title: "深层目录", Type: "text"}},
+		Rule{ID: "exact", Match: MatchSpec{Glob: "a/b/c.d"}, Target: TargetSpec{Kind: "path"}, Annotation: AnnotationSpec{Title: "精确文件", Type: "text"}},
+		Rule{ID: "star", Match: MatchSpec{Glob: "**/*.d"}, Target: TargetSpec{Kind: "path"}, Annotation: AnnotationSpec{Title: "通配文件", Type: "text"}},
+		Rule{ID: "all", Target: TargetSpec{Kind: "path"}, Annotation: AnnotationSpec{Title: "全部", Type: "text"}},
+		Rule{ID: "top", Match: MatchSpec{Glob: "a/**"}, Target: TargetSpec{Kind: "path"}, Annotation: AnnotationSpec{Title: "顶层目录", Type: "text"}},
+		Rule{ID: "sibling", Match: MatchSpec{Glob: "a2/**"}, Target: TargetSpec{Kind: "path"}, Annotation: AnnotationSpec{Title: "同名前缀目录", Type: "text"}},
+	)
+	tests := []struct {
+		path  string
+		isDir bool
+		want  []string
+		title string
+	}{
+		{"a/b/c.d", false, []string{"deep", "exact", "star", "all", "top"}, "深层目录"},
+		{"a/b/c/e.f", false, []string{"deep", "all", "top"}, "深层目录"},
+		{"a", true, []string{"all", "top"}, "全部"},
+		{"a2/x.d", false, []string{"star", "all", "sibling"}, "通配文件"},
+		{"stackable/x.d", false, []string{"star", "all"}, "通配文件"},
+	}
+	for _, tc := range tests {
+		results := engine.AnnotatePath(tc.path, tc.isDir)
+		if len(results) != 1 {
+			t.Fatalf("%s: results = %#v", tc.path, results)
+		}
+		if !reflect.DeepEqual(results[0].RuleIDs, tc.want) {
+			t.Fatalf("%s: ruleIDs = %v, want %v", tc.path, results[0].RuleIDs, tc.want)
+		}
+		if results[0].Title != tc.title {
+			t.Fatalf("%s: title = %q, want %q", tc.path, results[0].Title, tc.title)
+		}
+	}
+}
+
+func TestAnnotatePathIndexHonorsExtensionsAndCase(t *testing.T) {
+	engine := testEngine(t, Rule{
+		ID: "stk", Match: MatchSpec{Extensions: []string{".stk"}, Glob: "stackable/**"},
+		Target: TargetSpec{Kind: "path"}, Annotation: AnnotationSpec{Title: "堆叠目录", Type: "text"},
+	})
+	if len(engine.AnnotatePath("stackable/a.equ", false)) != 0 {
+		t.Fatal("extension mismatch should not match")
+	}
+	if len(engine.AnnotatePath("stackable/a.stk", true)) != 0 {
+		t.Fatal("extension rule should not match a directory")
+	}
+	results := engine.AnnotatePath("Stackable\\Nested\\A.STK", false)
+	if len(results) != 1 || results[0].Title != "堆叠目录" {
+		t.Fatalf("results = %#v", results)
 	}
 }
 

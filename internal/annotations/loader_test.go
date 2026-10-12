@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	appconfig "pvfine/config"
 )
 
 func TestParseRejectsUnsupportedVersionAndUnknownFields(t *testing.T) {
@@ -255,5 +257,120 @@ func TestLoadFileMergesSiblingLists(t *testing.T) {
 	}
 	if _, ok := engine.Relation("equipment"); !ok {
 		t.Fatal("sibling lists.json was not merged")
+	}
+}
+
+func TestLoadDefaultMergesPathNotes(t *testing.T) {
+	paths, err := ParseRules(appconfig.PathsJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths.Rules) == 0 {
+		t.Fatal("config/paths.json has no rules")
+	}
+	engine, err := LoadDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := make(map[string]bool)
+	for _, rule := range engine.Document().Rules {
+		if rule.Target.Kind == "path" {
+			merged[rule.ID] = true
+		}
+	}
+	for _, rule := range paths.Rules {
+		if !merged[rule.ID] {
+			t.Fatalf("path rule %s was not merged", rule.ID)
+		}
+	}
+	tests := []struct {
+		path  string
+		isDir bool
+		title string
+	}{
+		{"equipment/equipment.lst", false, "装备列表"},
+		{"equipment", true, "装备"},
+		{"list/npc.lst", false, "NPC列表"},
+		{"string", true, "字符串表目录"},
+		{"etc", true, "杂项文件"},
+		{"etc/advancealtar", true, "守护者祭坛"},
+		// A generated directory note describes that directory only: paths without
+		// a rule of their own stay unannotated instead of inheriting an ancestor.
+		{"etc/100lvfarming", true, ""},
+		{"etc/100lvfarming/anything.dat", false, ""},
+		{"etc/advancealtar/unknown.dat", false, ""},
+		// The hand-maintained rule in annotations.json keeps the primary title.
+		{"etc/itemdropinfo_monster_hell.etc", false, "深渊掉落"},
+		{"unknown/path.dat", false, ""},
+	}
+	for _, tc := range tests {
+		results := engine.AnnotatePath(tc.path, tc.isDir)
+		title := ""
+		if len(results) > 0 {
+			title = results[0].Title
+		}
+		if title != tc.title {
+			t.Fatalf("%s: title = %q, want %q", tc.path, title, tc.title)
+		}
+	}
+}
+
+func TestLoadFilePrefersSiblingPaths(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := filepath.Join(dir, "annotations.json")
+	if err := os.WriteFile(rulesPath, []byte(`{"version":1,"rules":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "paths.json"), []byte(`{"version":1,"rules":[{"id":"path.sibling","match":{"glob":"equipment/**"},"target":{"kind":"path"},"annotation":{"title":"本地目录说明","type":"text"},"group":"path"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := LoadFile(rulesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := engine.AnnotatePath("equipment/equipment.lst", false)
+	if len(results) != 1 || results[0].Title != "本地目录说明" {
+		t.Fatalf("results = %#v", results)
+	}
+	if len(engine.Document().Rules) != 1 {
+		t.Fatalf("sibling paths.json should replace the built-in path notes, got %d rules", len(engine.Document().Rules))
+	}
+}
+
+func TestLoadFileFallsBackToBuiltinPaths(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := filepath.Join(dir, "annotations.json")
+	if err := os.WriteFile(rulesPath, []byte(`{"version":1,"rules":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := LoadFile(rulesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results := engine.AnnotatePath("equipment/equipment.lst", false); len(results) != 1 || results[0].Title != "装备列表" {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestMergePathRulesSkipsExistingIDs(t *testing.T) {
+	document := Document{Version: 1, Rules: []Rule{{
+		ID: "path.keep", Match: MatchSpec{Glob: "equipment/**"}, Target: TargetSpec{Kind: "path"},
+		Annotation: AnnotationSpec{Title: "保留", Type: "text"},
+	}}}
+	data := []byte(`{"version":1,"rules":[
+		{"id":"path.keep","match":{"glob":"equipment/**"},"target":{"kind":"path"},"annotation":{"title":"重复","type":"text"}},
+		{"id":"path.new","match":{"glob":"stackable/**"},"target":{"kind":"path"},"annotation":{"title":"新增","type":"text"}}
+	]}`)
+	if err := mergePathRules(&document, data); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Rules) != 2 || document.Rules[0].Annotation.Title != "保留" || document.Rules[1].ID != "path.new" {
+		t.Fatalf("rules = %#v", document.Rules)
+	}
+	if err := mergePathRules(&document, data); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Rules) != 2 {
+		t.Fatalf("merging twice duplicated rules: %#v", document.Rules)
 	}
 }

@@ -273,3 +273,42 @@ func TestVersionedRulesSaveAndPreview(t *testing.T) {
 		t.Fatal("invalid config version accepted")
 	}
 }
+
+// TestRulesAPIIgnoresGeneratedPathNotes keeps the editor on the hand-maintained
+// rules: a sibling paths.json must never round-trip into annotations.json.
+func TestRulesAPIIgnoresGeneratedPathNotes(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := filepath.Join(dir, "annotations.json")
+	if err := os.WriteFile(rulesPath, []byte(`{"version":1,"rules":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	generated := []byte(`{"version":1,"rules":[{"id":"path.dir","match":{"glob":"equipment/**"},"target":{"kind":"path"},"annotation":{"title":"装备","type":"text"}}]}`)
+	if err := os.WriteFile(filepath.Join(dir, "paths.json"), generated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := &editorServer{rulesPath: rulesPath, runtimePath: filepath.Join(dir, "runtime.json"), token: "test-token"}
+	call := func(method string, body []byte) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, "/api/rules", bytes.NewReader(body))
+		request.Header.Set("X-Annotation-Editor-Token", "test-token")
+		response := httptest.NewRecorder()
+		server.routes().ServeHTTP(response, request)
+		return response
+	}
+	if read := call(http.MethodGet, nil); read.Code != http.StatusOK || bytes.Contains(read.Body.Bytes(), []byte("path.dir")) {
+		t.Fatalf("GET /api/rules returned generated path notes: %s", read.Body.String())
+	}
+	saved := call(http.MethodPut, []byte(`{"version":1,"rules":[{"id":"hand","target":{"kind":"section","section":"name"},"annotation":{"title":"名称","type":"text"}}]}`))
+	if saved.Code != http.StatusOK {
+		t.Fatalf("save = %d: %s", saved.Code, saved.Body.String())
+	}
+	for _, path := range []string{rulesPath, filepath.Join(dir, "runtime.json")} {
+		written, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(written, []byte("path.dir")) || bytes.Contains(written, []byte("equipment/**")) {
+			t.Fatalf("%s contains generated path rules: %s", path, written)
+		}
+	}
+}

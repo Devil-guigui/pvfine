@@ -15,6 +15,7 @@ description: >-
 ## 1. 定位规则并确认数据
 
 - 标注：`config/annotations.json`（`version: 1`，含 `fields` 和 `rules`）；关联 ID 的定义在**另一个文件** `config/lists.json` 的 `relations` 内。不要仅因标注需要关联 ID 就往 `annotations.json` 新增 `relations`。
+- 批量路径注释：`config/paths.json`（`version: 1`，全是 `target.kind: "path"` 的**精确 glob** 规则：目录注释只作用于该目录自身，不向子孙继承），由外部数据整理生成，加载器在 `annotations.json` 之后合并、按 `id` 去重。手写规则不要放这里；编辑器也只写 `annotations.json`。
 - 渲染：`config/rendering.json`（`version: 1`，含 `rules`）。
 - 从实际反编译文本确定文件相对路径、扩展名、Section 名称（JSON 中不带方括号）、token 顺序、类型、前置元数据、分隔值和完整记录宽度。不要从换行推断原始 token 边界；显示用的换行与标注记录宽度是两套独立配置。
 - 编辑前搜索是否已有相同 Section、相同路径/扩展名的规则；能改现有规则就不创建冲突的重复规则。对 `config/*.bak` 不做手工同步；保留既有修改，避免覆写整份大型 JSON。
@@ -132,6 +133,7 @@ description: >-
 2. 修改后检查 JSON 语法和结构，例如：
    ```bash
    python3 -m json.tool config/annotations.json >/dev/null
+   python3 -m json.tool config/paths.json >/dev/null
    python3 -m json.tool config/rendering.json >/dev/null
    git diff --check
    ```
@@ -141,7 +143,7 @@ description: >-
    go test ./services -run 'Annotation|Rendering' -count=1
    ```
    已有 `LoadDefault` 测试能检查嵌入配置；新增复杂规则时给 `internal/annotations/*_test.go` 或 `internal/pvf/script_render_test.go` 增加“输入 token → 预期标注/换行”的针对性测试，覆盖组首、连续分隔符、尾部不完整记录和不匹配文件。需要检查完整 Go 项目时运行 `go test ./...`；环境/既有无关测试失败要单独说明。
-4. 本地开发从仓库运行时，服务优先寻找 `config/annotations.json`、`config/rendering.json`；打包后可能使用用户配置目录下的运行时副本。修改仓库源文件**不保证已运行的应用自动更新**。按实际启动环境重新打开应用，或调用应用已有的 `AnnotationService.ReloadRules` / `RenderingService.ReloadRules`（会校验并替换活动引擎，失败时保留旧引擎）。不要在没有用户授权时重启、发布或修改用户运行时副本。
+4. 本地开发从仓库运行时，服务优先寻找 `config/annotations.json`、`config/rendering.json`；打包后可能使用用户配置目录下的运行时副本。`config/paths.json` 由 `internal/annotations/loader.go` 的 `mergePathRules` 合并，`LoadFile` 先取与规则文件同目录的 `paths.json`，缺失时回退内置数据；`LoadDefault` 结果已缓存，重复调用不会重新解析。修改仓库源文件**不保证已运行的应用自动更新**。按实际启动环境重新打开应用，或调用应用已有的 `AnnotationService.ReloadRules` / `RenderingService.ReloadRules`（会校验并替换活动引擎，失败时保留旧引擎）。不要在没有用户授权时重启、发布或修改用户运行时副本。
 5. 给出修改的文件与规则 ID、几个代表性 token 的预期结果、验证命令与结果，以及是否需要用户主动重新加载。不要只因 JSON 语法通过就声称应用的运行时规则已生效。
 
 ## 5. 参考实现（需要新字段时先核对）

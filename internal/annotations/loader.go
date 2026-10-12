@@ -8,13 +8,33 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 
 	appconfig "pvfine/config"
 )
 
+var (
+	defaultEngineOnce sync.Once
+	defaultEngine     *Engine
+	defaultEngineErr  error
+)
+
+// LoadDefault parses the embedded rule set once and reuses the immutable
+// engine. The generated path notes make the document large enough that a parse
+// per preview or auxiliary core would be measurable.
 func LoadDefault() (*Engine, error) {
+	defaultEngineOnce.Do(func() {
+		defaultEngine, defaultEngineErr = loadDefault()
+	})
+	return defaultEngine, defaultEngineErr
+}
+
+func loadDefault() (*Engine, error) {
 	document, err := parseDocument(appconfig.AnnotationsJSON)
 	if err != nil {
+		return nil, err
+	}
+	if err := mergePathRules(&document, appconfig.PathsJSON); err != nil {
 		return nil, err
 	}
 	lists, err := ParseLists(appconfig.ListsJSON)
@@ -26,6 +46,32 @@ func LoadDefault() (*Engine, error) {
 		return nil, err
 	}
 	return Compile(document)
+}
+
+// mergePathRules appends the bulk path annotation set (directory and file tree
+// notes) after the hand-maintained rules, so an explicit rule keeps the primary
+// title for a path. Rules whose ID is already present are skipped, which keeps
+// merging idempotent when a user mirrors either file by hand.
+func mergePathRules(document *Document, data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	paths, err := parseDocument(data)
+	if err != nil {
+		return fmt.Errorf("解析 path 标注失败: %w", err)
+	}
+	known := make(map[string]struct{}, len(document.Rules))
+	for _, rule := range document.Rules {
+		known[rule.ID] = struct{}{}
+	}
+	for _, rule := range paths.Rules {
+		if _, exists := known[rule.ID]; exists {
+			continue
+		}
+		known[rule.ID] = struct{}{}
+		document.Rules = append(document.Rules, rule)
+	}
+	return nil
 }
 
 func Parse(data []byte) (Document, error) {

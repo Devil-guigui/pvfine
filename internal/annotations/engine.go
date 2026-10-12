@@ -16,6 +16,14 @@ type Engine struct {
 	scoped   bool
 	document Document
 	rules    []compiledRule
+	// Path rules resolve once per tree node. Bulk path notes would otherwise
+	// force a full glob scan per node, so they are bucketed by literal glob and
+	// by the literal "<dir>/**" prefix at compile time.
+	pathExact   map[string][]int
+	pathPrefix  map[string][]int
+	pathGeneral []int
+	// scriptRules lists the non-path rules that annotate script tokens.
+	scriptRules []int
 }
 
 // ContextResolver resolves an ID using an optional value from the same
@@ -98,7 +106,78 @@ func compileValidated(document Document) *Engine {
 			appendRule(fieldRule)
 		}
 	}
-	return &Engine{document: document, rules: rules}
+	engine := &Engine{document: document, rules: rules}
+	return engine.indexRules()
+}
+
+// indexRules buckets path rules so AnnotatePath only evaluates plausible
+// candidates, and records the script rules that Annotate walks. Rule order is
+// preserved because it decides the primary title of a path.
+func (e *Engine) indexRules() *Engine {
+	for index := range e.rules {
+		rule := &e.rules[index]
+		if rule.rule.Target.Kind != "path" {
+			// Token, section and range rules never take part in path lookups.
+			e.scriptRules = append(e.scriptRules, index)
+			continue
+		}
+		glob := normalizePath(rule.rule.Match.Glob)
+		if prefix, ok := literalDirPrefix(glob); ok {
+			e.pathPrefix = appendRuleIndex(e.pathPrefix, prefix, index)
+			continue
+		}
+		if glob != "" && isLiteralGlob(glob) {
+			e.pathExact = appendRuleIndex(e.pathExact, glob, index)
+			continue
+		}
+		// An empty glob matches every path, and wildcard globs need a real match.
+		e.pathGeneral = append(e.pathGeneral, index)
+	}
+	return e
+}
+
+func appendRuleIndex(buckets map[string][]int, key string, index int) map[string][]int {
+	if buckets == nil {
+		buckets = make(map[string][]int)
+	}
+	buckets[key] = append(buckets[key], index)
+	return buckets
+}
+
+// isLiteralGlob reports whether a normalized glob matches exactly one path.
+func isLiteralGlob(glob string) bool {
+	return !strings.ContainsAny(glob, `*?[]\`)
+}
+
+// literalDirPrefix returns the literal directory of a "<dir>/**" pattern. Such
+// a pattern matches the directory itself and every path below it.
+func literalDirPrefix(glob string) (string, bool) {
+	if !strings.HasSuffix(glob, "/**") {
+		return "", false
+	}
+	prefix := strings.TrimSuffix(glob, "/**")
+	if prefix == "" || !isLiteralGlob(prefix) {
+		return "", false
+	}
+	return prefix, true
+}
+
+// pathCandidateIndexes lists the rules worth evaluating for one path, in rule
+// order. It is a superset filter; callers still verify each rule with matches.
+func (e *Engine) pathCandidateIndexes(filePath string) []int {
+	key := normalizePath(filePath)
+	indexes := make([]int, 0, len(e.pathGeneral)+4)
+	indexes = append(indexes, e.pathExact[key]...)
+	for position := len(key); position > 0; position-- {
+		if key[position-1] != '/' {
+			continue
+		}
+		indexes = append(indexes, e.pathPrefix[key[:position-1]]...)
+	}
+	indexes = append(indexes, e.pathPrefix[key]...)
+	indexes = append(indexes, e.pathGeneral...)
+	sort.Ints(indexes)
+	return indexes
 }
 
 func annotationRuleCoversField(rule, field Rule) bool {
@@ -225,9 +304,10 @@ func (e *Engine) annotate(filePath string, view pvf.ScriptView, resolver Context
 			InlineImage:     item.image != nil && item.inlineImage,
 		})
 	}
-	for _, compiled := range e.rules {
+	for _, index := range e.scriptRules {
+		compiled := e.rules[index]
 		rule := compiled.rule
-		if rule.Target.Kind == "path" || !compiled.matches(filePath, false) {
+		if !compiled.matches(filePath, false) {
 			continue
 		}
 		anchors := e.editorAnchors(rule, view)
@@ -390,8 +470,9 @@ func (e *Engine) relationWithDefaults(relation RelationSpec) RelationSpec {
 
 func (e *Engine) AnnotatePath(filePath string, isDir bool) []Result {
 	items := make([]matchedItem, 0)
-	for _, compiled := range e.rules {
-		if compiled.rule.Target.Kind != "path" || !compiled.matches(filePath, isDir) {
+	for _, index := range e.pathCandidateIndexes(filePath) {
+		compiled := e.rules[index]
+		if !compiled.matches(filePath, isDir) {
 			continue
 		}
 		items = append(items, annotationItem(compiled.rule, "", "", "", nil, nil))

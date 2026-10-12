@@ -10,31 +10,58 @@ import (
 
 const sourceRelativePath = "config/annotations.json"
 
-// LoadFile validates and compiles a rule document from disk.
-func LoadFile(path string) (*Engine, error) {
+// LoadRulesFile reads and validates a hand-maintained rule file together with
+// its sibling lists.json, without merging the generated path notes. The
+// annotation editor uses it so a save never writes the bulk path rules back
+// into annotations.json.
+func LoadRulesFile(path string) (Document, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("读取标注规则失败: %w", err)
+		return Document{}, fmt.Errorf("读取标注规则失败: %w", err)
 	}
 	document, err := parseDocument(data)
 	if err != nil {
-		return nil, err
+		return Document{}, err
 	}
 	listsPath := filepath.Join(filepath.Dir(path), "lists.json")
 	if listsData, listsErr := os.ReadFile(listsPath); listsErr == nil {
 		lists, err := ParseLists(listsData)
 		if err != nil {
-			return nil, err
+			return Document{}, err
 		}
 		document.Relations = lists.Relations
 	} else if !os.IsNotExist(listsErr) {
-		return nil, fmt.Errorf("读取列表配置失败: %w", listsErr)
+		return Document{}, fmt.Errorf("读取列表配置失败: %w", listsErr)
 	} else if document.Relations == nil {
 		lists, err := ParseLists(appconfig.ListsJSON)
 		if err != nil {
-			return nil, err
+			return Document{}, err
 		}
 		document.Relations = lists.Relations
+	}
+	if err := Validate(document); err != nil {
+		return Document{}, err
+	}
+	return document, nil
+}
+
+// LoadFile validates and compiles a rule document from disk. A paths.json next
+// to the rule file overrides the built-in path notes, so a runtime mirror can
+// ship its own directory and file comments.
+func LoadFile(path string) (*Engine, error) {
+	document, err := LoadRulesFile(path)
+	if err != nil {
+		return nil, err
+	}
+	pathsData := appconfig.PathsJSON
+	pathsPath := filepath.Join(filepath.Dir(path), "paths.json")
+	if sibling, pathsErr := os.ReadFile(pathsPath); pathsErr == nil {
+		pathsData = sibling
+	} else if !os.IsNotExist(pathsErr) {
+		return nil, fmt.Errorf("读取 path 标注失败: %w", pathsErr)
+	}
+	if err := mergePathRules(&document, pathsData); err != nil {
+		return nil, err
 	}
 	if err := Validate(document); err != nil {
 		return nil, err

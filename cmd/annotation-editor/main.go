@@ -143,12 +143,14 @@ func (s *editorServer) handleRules(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	switch r.Method {
 	case http.MethodGet:
-		document, err := annotationrules.LoadFile(s.rulesPath)
+		// The editor owns the hand-maintained rules only. config/paths.json is
+		// generated bulk data that must never round-trip into annotations.json.
+		document, err := annotationrules.LoadRulesFile(s.rulesPath)
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		data, err := annotationrules.Marshal(document.Document())
+		data, err := annotationrules.Marshal(document)
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -171,12 +173,12 @@ func (s *editorServer) handleRules(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		current, err := annotationrules.LoadFile(s.rulesPath)
+		current, err := annotationrules.LoadRulesFile(s.rulesPath)
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		document.Relations = current.Document().Relations
+		document.Relations = current.Relations
 		if err := annotationrules.Validate(document); err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
