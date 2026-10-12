@@ -280,10 +280,9 @@ func TestAnnotateStandaloneGroupsDoNotMatchQuotedSentinel(t *testing.T) {
 }
 
 func TestDefaultIndependentDropReferencesAcrossOptionalList(t *testing.T) {
-	engine, err := LoadDefault()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Only the curated rules: generated section notes would add extra section
+	// level results that this token reference test does not exercise.
+	engine := handWrittenEngine(t)
 	renderer, err := rendering.LoadDefault()
 	if err != nil {
 		t.Fatal(err)

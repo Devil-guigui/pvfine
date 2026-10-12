@@ -943,13 +943,16 @@ func TestAnnotationVersionDiskReload(t *testing.T) {
 	}
 }
 
-// isolatedRulesPath creates an empty sibling paths.json so a temporary rule file
-// stays the complete rule set instead of inheriting the built-in path notes.
+// isolatedRulesPath creates empty sibling paths.json and sections.json files so
+// a temporary rule file stays the complete rule set instead of inheriting the
+// built-in generated rules.
 func isolatedRulesPath(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "paths.json"), []byte(`{"version":1,"rules":[]}`), 0o600); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"paths.json", "sections.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(`{"version":1,"rules":[]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return filepath.Join(dir, "annotations.json")
 }

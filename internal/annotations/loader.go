@@ -29,13 +29,33 @@ func LoadDefault() (*Engine, error) {
 	return defaultEngine, defaultEngineErr
 }
 
+// generatedRuleFile is one bulk rule set that ships next to annotations.json.
+type generatedRuleFile struct {
+	// name is the sibling file that overrides the embedded copy at runtime.
+	name  string
+	label string
+	data  []byte
+}
+
+// generatedRuleFiles lists the generated rule sets merged after the hand-written
+// rules. Order only decides the primary title of a path or section, so the
+// curated rules in annotations.json always stay first.
+func generatedRuleFiles() []generatedRuleFile {
+	return []generatedRuleFile{
+		{name: "paths.json", label: "path 标注", data: appconfig.PathsJSON},
+		{name: "sections.json", label: "section 标注", data: appconfig.SectionsJSON},
+	}
+}
+
 func loadDefault() (*Engine, error) {
 	document, err := parseDocument(appconfig.AnnotationsJSON)
 	if err != nil {
 		return nil, err
 	}
-	if err := mergePathRules(&document, appconfig.PathsJSON); err != nil {
-		return nil, err
+	for _, generated := range generatedRuleFiles() {
+		if err := mergeGeneratedRules(&document, generated.data, generated.label); err != nil {
+			return nil, err
+		}
 	}
 	lists, err := ParseLists(appconfig.ListsJSON)
 	if err != nil {
@@ -48,23 +68,23 @@ func loadDefault() (*Engine, error) {
 	return Compile(document)
 }
 
-// mergePathRules appends the bulk path annotation set (directory and file tree
-// notes) after the hand-maintained rules, so an explicit rule keeps the primary
-// title for a path. Rules whose ID is already present are skipped, which keeps
-// merging idempotent when a user mirrors either file by hand.
-func mergePathRules(document *Document, data []byte) error {
+// mergeGeneratedRules appends a generated rule set after the hand-written rules,
+// so an explicit rule keeps the primary title for a path or section. Rules whose
+// ID is already present are skipped, which keeps merging idempotent when a user
+// mirrors a generated file by hand.
+func mergeGeneratedRules(document *Document, data []byte, label string) error {
 	if len(data) == 0 {
 		return nil
 	}
-	paths, err := parseDocument(data)
+	generated, err := parseDocument(data)
 	if err != nil {
-		return fmt.Errorf("解析 path 标注失败: %w", err)
+		return fmt.Errorf("解析 %s 失败: %w", label, err)
 	}
 	known := make(map[string]struct{}, len(document.Rules))
 	for _, rule := range document.Rules {
 		known[rule.ID] = struct{}{}
 	}
-	for _, rule := range paths.Rules {
+	for _, rule := range generated.Rules {
 		if _, exists := known[rule.ID]; exists {
 			continue
 		}

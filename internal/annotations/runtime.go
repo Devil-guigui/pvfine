@@ -11,9 +11,9 @@ import (
 const sourceRelativePath = "config/annotations.json"
 
 // LoadRulesFile reads and validates a hand-maintained rule file together with
-// its sibling lists.json, without merging the generated path notes. The
-// annotation editor uses it so a save never writes the bulk path rules back
-// into annotations.json.
+// its sibling lists.json, without merging the generated rule sets. The
+// annotation editor uses it so a save never writes the bulk path or section
+// rules back into annotations.json.
 func LoadRulesFile(path string) (Document, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -45,23 +45,25 @@ func LoadRulesFile(path string) (Document, error) {
 	return document, nil
 }
 
-// LoadFile validates and compiles a rule document from disk. A paths.json next
-// to the rule file overrides the built-in path notes, so a runtime mirror can
-// ship its own directory and file comments.
+// LoadFile validates and compiles a rule document from disk. A paths.json or
+// sections.json next to the rule file overrides the built-in generated rules, so
+// a runtime mirror can ship its own notes.
 func LoadFile(path string) (*Engine, error) {
 	document, err := LoadRulesFile(path)
 	if err != nil {
 		return nil, err
 	}
-	pathsData := appconfig.PathsJSON
-	pathsPath := filepath.Join(filepath.Dir(path), "paths.json")
-	if sibling, pathsErr := os.ReadFile(pathsPath); pathsErr == nil {
-		pathsData = sibling
-	} else if !os.IsNotExist(pathsErr) {
-		return nil, fmt.Errorf("读取 path 标注失败: %w", pathsErr)
-	}
-	if err := mergePathRules(&document, pathsData); err != nil {
-		return nil, err
+	for _, generated := range generatedRuleFiles() {
+		data := generated.data
+		sibling := filepath.Join(filepath.Dir(path), generated.name)
+		if override, readErr := os.ReadFile(sibling); readErr == nil {
+			data = override
+		} else if !os.IsNotExist(readErr) {
+			return nil, fmt.Errorf("读取 %s 失败: %w", generated.label, readErr)
+		}
+		if err := mergeGeneratedRules(&document, data, generated.label); err != nil {
+			return nil, err
+		}
 	}
 	if err := Validate(document); err != nil {
 		return nil, err

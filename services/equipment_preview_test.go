@@ -123,6 +123,25 @@ func TestPreviewServiceParseEQUAllowsEmptyIconAndUnknownEnum(t *testing.T) {
 	}
 }
 
+func TestPreviewServiceParseEQUExplainSection(t *testing.T) {
+	result, err := NewPreviewService().ParseEQU(-1, "[explain]\n`主要说明`")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.BaseExplain != "主要说明" {
+		t.Fatalf("base explain = %q", result.BaseExplain)
+	}
+	// [explain] is the most common 110 .equ explanation section, so it wins over
+	// the older [basic explain] fallback.
+	result, err = NewPreviewService().ParseEQU(-1, "[basic explain]\n`简单说明`\n[explain]\n`主要说明`")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.BaseExplain != "主要说明" {
+		t.Fatalf("base explain = %q", result.BaseExplain)
+	}
+}
+
 func TestPreviewServiceParseEQUNegativeAttribute(t *testing.T) {
 	result, err := NewPreviewService().ParseEQU(-1, "[name]\n`负收益`\n[hit rate]\n-5")
 	if err != nil {

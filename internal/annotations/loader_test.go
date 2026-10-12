@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	appconfig "pvfine/config"
+	"pvfine/internal/pvf"
 )
 
 func TestParseRejectsUnsupportedVersionAndUnknownFields(t *testing.T) {
@@ -324,6 +325,9 @@ func TestLoadFilePrefersSiblingPaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "paths.json"), []byte(`{"version":1,"rules":[{"id":"path.sibling","match":{"glob":"equipment/**"},"target":{"kind":"path"},"annotation":{"title":"本地目录说明","type":"text"},"group":"path"}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "sections.json"), []byte(`{"version":1,"rules":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	engine, err := LoadFile(rulesPath)
 	if err != nil {
 		t.Fatal(err)
@@ -337,7 +341,7 @@ func TestLoadFilePrefersSiblingPaths(t *testing.T) {
 	}
 }
 
-func TestLoadFileFallsBackToBuiltinPaths(t *testing.T) {
+func TestLoadFileFallsBackToBuiltinGeneratedRules(t *testing.T) {
 	dir := t.TempDir()
 	rulesPath := filepath.Join(dir, "annotations.json")
 	if err := os.WriteFile(rulesPath, []byte(`{"version":1,"rules":[]}`), 0o600); err != nil {
@@ -350,9 +354,106 @@ func TestLoadFileFallsBackToBuiltinPaths(t *testing.T) {
 	if results := engine.AnnotatePath("equipment/equipment.lst", false); len(results) != 1 || results[0].Title != "装备列表" {
 		t.Fatalf("results = %#v", results)
 	}
+	if results := engine.Annotate("a.act", pvf.ParseScriptView("[accelerate]\n100 5"), nil); len(results) != 1 || results[0].Title != "加速参数" {
+		t.Fatalf("section results = %#v", results)
+	}
 }
 
-func TestMergePathRulesSkipsExistingIDs(t *testing.T) {
+func TestLoadDefaultMergesSectionNotes(t *testing.T) {
+	sections, err := ParseRules(appconfig.SectionsJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sections.Rules) == 0 {
+		t.Fatal("config/sections.json has no rules")
+	}
+	engine, err := LoadDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := make(map[string]bool)
+	for _, rule := range engine.Document().Rules {
+		merged[rule.ID] = true
+	}
+	for _, rule := range sections.Rules {
+		if !merged[rule.ID] {
+			t.Fatalf("section rule %s was not merged", rule.ID)
+		}
+	}
+	tests := []struct {
+		file string
+		text string
+		want string
+	}{
+		// pvfUtility PvfComments notes reach the section tag.
+		{"a.act", "[accelerate]\n100 5", "加速参数"},
+		// The rule is extension scoped, so another extension stays untouched.
+		{"a.equ", "[accelerate]\n100 5", ""},
+		// A hand-maintained rule keeps the primary title for its section.
+		{"a.act", "[attack]\n1", "攻击"},
+		{"a.act", "[unknown section]\n1", ""},
+	}
+	for _, tc := range tests {
+		results := engine.Annotate(tc.file, pvf.ParseScriptView(tc.text), nil)
+		title := ""
+		if len(results) > 0 {
+			title = results[0].Title
+		}
+		if title != tc.want {
+			t.Fatalf("%s %q: title = %q, want %q", tc.file, tc.text, title, tc.want)
+		}
+	}
+}
+
+// TestLoadDefaultExplainFieldFeedsPreviewWithoutDuplicateTag checks that the
+// shared [explain] preview field neither adds a second section tag nor stays
+// invisible to the equipment preview.
+func TestLoadDefaultExplainFieldFeedsPreviewWithoutDuplicateTag(t *testing.T) {
+	engine, err := LoadDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := pvf.ParseScriptView("[explain]\n`主要说明`")
+	results := engine.Annotate("equipment/test.equ", view, nil)
+	if len(results) != 1 || results[0].Title != "装备说明" {
+		t.Fatalf("results = %#v", results)
+	}
+	found := false
+	for _, field := range engine.PreviewFields("equipment/test.equ", "equ") {
+		if field.ID == "equ.explain" && field.Preview != nil && field.Preview.Role == "base-explain" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("equ.explain preview field is missing")
+	}
+	if values := engine.ExtractPreviewFields("equipment/test.equ", view, "equ"); len(values) == 0 {
+		t.Fatal("[explain] produced no preview value")
+	}
+}
+
+// handWrittenEngine compiles config/annotations.json with its relations but
+// without the generated path and section rule sets, for tests that assert the
+// behaviour of the curated rules alone.
+func handWrittenEngine(t *testing.T) *Engine {
+	t.Helper()
+	document, err := ParseRules(appconfig.AnnotationsJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lists, err := ParseLists(appconfig.ListsJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document.Relations = lists.Relations
+	engine, err := Compile(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return engine
+}
+
+func TestMergeGeneratedRulesSkipsExistingIDs(t *testing.T) {
 	document := Document{Version: 1, Rules: []Rule{{
 		ID: "path.keep", Match: MatchSpec{Glob: "equipment/**"}, Target: TargetSpec{Kind: "path"},
 		Annotation: AnnotationSpec{Title: "保留", Type: "text"},
@@ -361,13 +462,13 @@ func TestMergePathRulesSkipsExistingIDs(t *testing.T) {
 		{"id":"path.keep","match":{"glob":"equipment/**"},"target":{"kind":"path"},"annotation":{"title":"重复","type":"text"}},
 		{"id":"path.new","match":{"glob":"stackable/**"},"target":{"kind":"path"},"annotation":{"title":"新增","type":"text"}}
 	]}`)
-	if err := mergePathRules(&document, data); err != nil {
+	if err := mergeGeneratedRules(&document, data, "path 标注"); err != nil {
 		t.Fatal(err)
 	}
 	if len(document.Rules) != 2 || document.Rules[0].Annotation.Title != "保留" || document.Rules[1].ID != "path.new" {
 		t.Fatalf("rules = %#v", document.Rules)
 	}
-	if err := mergePathRules(&document, data); err != nil {
+	if err := mergeGeneratedRules(&document, data, "path 标注"); err != nil {
 		t.Fatal(err)
 	}
 	if len(document.Rules) != 2 {

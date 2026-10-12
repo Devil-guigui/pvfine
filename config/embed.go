@@ -8,6 +8,9 @@ var AnnotationsJSON []byte
 //go:embed paths.json
 var PathsJSON []byte
 
+//go:embed sections.json
+var SectionsJSON []byte
+
 //go:embed rendering.json
 var RenderingJSON []byte
 

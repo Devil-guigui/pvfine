@@ -1002,6 +1002,29 @@
         "type": "reference",
         "relation": "物品"
       }
+    },
+    {
+      "id": "equ.explain",
+      "match": {
+        "extensions": [
+          ".equ"
+        ]
+      },
+      "target": {
+        "kind": "section",
+        "section": "explain"
+      },
+      "annotation": {
+        "title": "装备说明",
+        "type": "text"
+      },
+      "preview": {
+        "provider": "equ",
+        "role": "base-explain",
+        "group": "explain",
+        "order": 5,
+        "format": "text"
+      }
     }
   ],
   "rules": [

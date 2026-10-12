@@ -242,25 +242,25 @@ func (s *editorServer) handlePreview(w http.ResponseWriter, r *http.Request) {
 	if request.Document != nil {
 		document = *request.Document
 		if len(document.Relations) == 0 {
-			current, err := annotationrules.LoadFile(s.rulesPath)
+			current, err := annotationrules.LoadRulesFile(s.rulesPath)
 			if err != nil {
 				writeAPIError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			document.Relations = current.Document().Relations
+			document.Relations = current.Relations
 		}
 		if err := annotationrules.Validate(document); err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	} else {
-		var loadErr error
-		documentEngine, loadErr := annotationrules.LoadFile(s.rulesPath)
+		// Preview the rules the editor owns, not the generated bulk rule sets.
+		current, loadErr := annotationrules.LoadRulesFile(s.rulesPath)
 		if loadErr != nil {
 			writeAPIError(w, http.StatusInternalServerError, loadErr.Error())
 			return
 		}
-		document = documentEngine.Document()
+		document = current
 	}
 	engine, err := annotationrules.Compile(document)
 	if err != nil {
