@@ -247,7 +247,7 @@ func describeLogEvent(name string, data any) (level, message, key, signature str
 		if stat, err := os.Stat(status.Path); err == nil {
 			size = fmt.Sprintf("%d B", stat.Size())
 		}
-		message = fmt.Sprintf("%s: 路径=%s; 大小=%s; 文件=%d; 分组=%d; 数据体=%d B; 变体=%s; Guard=%t; Paged110=%t; 修改=%d",
+		message = fmt.Sprintf("%s: 路径=%s; 大小=%s; 文件=%d; 分组=%d; 数据体=%d B; 变体=%s; Guard=%t; Paged=%t; 修改=%d",
 			action, status.Path, size, status.FileCount, status.GroupCount, status.BodySize, status.Format, status.UsesGuard, status.Paged110, status.ModifiedCount)
 	case IndexStatus:
 		key = "archive:index"

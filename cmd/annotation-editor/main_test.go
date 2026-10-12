@@ -206,7 +206,7 @@ func TestVersionedRulesSaveAndPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := &editorServer{rulesPath: rulesPath, runtimePath: filepath.Join(dir, "runtime.json"), token: "test-token"}
-	document := json.RawMessage(`{"version":1,"fields":[{"id":"name","pvfVersions":["90US","90CN"],"target":{"kind":"section","section":"name"},"annotation":{"title":"name","type":"text"}}],"rules":[{"id":"path","pvfVersions":["90US","110US"],"target":{"kind":"path"},"annotation":{"title":"path","type":"text"}}]}`)
+	document := json.RawMessage(`{"version":1,"fields":[{"id":"name","pvfVersions":["90US","90CN","115US"],"target":{"kind":"section","section":"name"},"annotation":{"title":"name","type":"text"}}],"rules":[{"id":"path","pvfVersions":["90US","110US"],"target":{"kind":"path"},"annotation":{"title":"path","type":"text"}}]}`)
 	call := func(method, path string, body []byte) *httptest.ResponseRecorder {
 		t.Helper()
 		request := httptest.NewRequest(method, path, bytes.NewReader(body))
@@ -230,14 +230,14 @@ func TestVersionedRulesSaveAndPreview(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &saved); err != nil {
 		t.Fatal(err)
 	}
-	if len(saved.Fields) != 1 || len(saved.Fields[0].PVFVersions) != 2 || len(saved.Rules) != 1 || len(saved.Rules[0].PVFVersions) != 2 {
+	if len(saved.Fields) != 1 || len(saved.Fields[0].PVFVersions) != 3 || len(saved.Rules) != 1 || len(saved.Rules[0].PVFVersions) != 2 {
 		t.Fatalf("versions lost: %s", response.Body.String())
 	}
 	for _, submitted := range []bool{false, true} {
 		for _, tc := range []struct {
 			version            string
 			annotations, paths int
-		}{{"90US", 1, 1}, {"90CN", 1, 0}, {"110US", 0, 1}, {"", 0, 0}} {
+		}{{"90US", 1, 1}, {"90CN", 1, 0}, {"110US", 0, 1}, {"115US", 1, 0}, {"", 0, 0}} {
 			payload := map[string]any{"path": "a.equ", "text": "[name]\n`example`"}
 			if tc.version != "" {
 				payload["pvfVersion"] = tc.version

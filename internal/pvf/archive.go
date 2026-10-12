@@ -202,7 +202,7 @@ type chunkCacheEntry struct {
 const defaultChunkCacheLimit = int64(64 << 20)
 const defaultResolveCacheLimit = int64(16 << 20)
 
-// Open reads and parses the archive at path. Newer Paged110 containers may
+// Open reads and parses the archive at path. Paged containers may
 // keep their per-page keys in sibling "sk.dat" / "DFO.exe" files; the bundled
 // 110US key table is used when the sibling sk.dat is absent.
 func Open(path string) (*Archive, error) {
@@ -211,7 +211,7 @@ func Open(path string) (*Archive, error) {
 
 // OpenWithSidecars reads and parses the archive at path while resolving
 // container key sidecars from sidecarDir instead of the file's own directory.
-// Backups of Paged110 archives live outside the client folder, so their page
+// Backups of paged archives live outside the client folder, so their page
 // keys have to be borrowed from the directory of the file they came from.
 // An empty sidecarDir behaves like Open.
 func OpenWithSidecars(path, sidecarDir string) (*Archive, error) {
@@ -231,7 +231,7 @@ func OpenWithSidecars(path, sidecarDir string) (*Archive, error) {
 }
 
 // Parse parses an archive from memory. The byte slice is retained; treat it
-// as read-only afterwards. Paged110 parsing uses the bundled key table; an
+// as read-only afterwards. Paged parsing uses the bundled 110US key table; an
 // archive-specific sidecar can be supplied by using Open.
 func Parse(data []byte) (*Archive, error) {
 	return parse(data, "")
@@ -403,8 +403,13 @@ func (a *Archive) Header() Header { return a.hdr }
 // UsesGuard reports whether the archive header uses the 0x55 guard variant.
 func (a *Archive) UsesGuard() bool { return a.guard }
 
-// IsPaged110 reports whether the archive uses the 110US page-guard layout.
-func (a *Archive) IsPaged110() bool { return a.format.container == pagedContainer }
+// IsPaged reports whether the archive uses page guards, independently of its
+// client version.
+func (a *Archive) IsPaged() bool { return a.format.container == pagedContainer }
+
+// IsPaged110 is the legacy name for the shared page-guard capability.
+// Deprecated: use IsPaged for capabilities or ClientVersion for client identity.
+func (a *Archive) IsPaged110() bool { return a.IsPaged() }
 
 // FileCount returns the number of file entries.
 func (a *Archive) FileCount() int32 { return int32(len(a.items)) }
@@ -616,7 +621,8 @@ func joinPath(dir, name string) string {
 	}
 }
 
-// ArchiveInfoView is a UI-facing snapshot of the archive state.
+// ArchiveInfoView is a UI-facing snapshot of the archive state. Paged110 is a
+// legacy wire field for the shared paged capability, not a client version.
 type ArchiveInfoView struct {
 	Path              string            `json:"path"`
 	FileCount         int32             `json:"fileCount"`
@@ -639,7 +645,7 @@ func (a *Archive) Info() ArchiveInfoView {
 		BodySize:          a.hdr.BodySize,
 		ModifiedCount:     a.ModifiedCount(),
 		UsesGuard:         a.guard,
-		Paged110:          a.IsPaged110(),
+		Paged110:          a.IsPaged(),
 		Format:            a.Format(),
 		ContentRules:      a.ContentRules(),
 		WriteCapabilities: a.WriteCapabilities(),

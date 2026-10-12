@@ -178,7 +178,7 @@ func TestSupportedDropRateVersion(t *testing.T) {
 			t.Fatalf("version %s should be supported", version)
 		}
 	}
-	for _, version := range []string{"110US", "", "recovered"} {
+	for _, version := range []string{"110US", "115US", "", "recovered"} {
 		if supportedDropRateVersion(version) {
 			t.Fatalf("version %s should be rejected", version)
 		}

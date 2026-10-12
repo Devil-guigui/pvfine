@@ -801,7 +801,7 @@ func TestAnnotationVersionLifecycle(t *testing.T) {
 	check(1)
 	rulesPath := filepath.Join(t.TempDir(), "annotations.json")
 	service := newAnnotationService(c, rulesPath)
-	for _, version := range []string{"110US", "90US"} {
+	for _, version := range []string{"110US", "115US", "90US"} {
 		for i := range document.Rules {
 			document.Rules[i].PVFVersions = []string{version}
 		}
@@ -868,7 +868,7 @@ func TestAnnotationVersionPreviewReload(t *testing.T) {
 	check("example")
 	rulesPath := filepath.Join(t.TempDir(), "annotations.json")
 	service := newAnnotationService(c, rulesPath)
-	for _, version := range []string{"110US", "90US"} {
+	for _, version := range []string{"110US", "115US", "90US"} {
 		document.Fields[0].PVFVersions = []string{version}
 		data, err := annotationrules.Marshal(document)
 		if err != nil {
@@ -923,7 +923,7 @@ func TestAnnotationVersionDiskReload(t *testing.T) {
 	}
 	check(1)
 	rulesPath := filepath.Join(t.TempDir(), "annotations.json")
-	for _, version := range []string{"110US", "90US"} {
+	for _, version := range []string{"110US", "115US", "90US"} {
 		document.Rules[0].PVFVersions = []string{version}
 		data, err := annotationrules.Marshal(document)
 		if err != nil {
