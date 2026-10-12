@@ -27,6 +27,13 @@ const providers: GUIProvider[] = [
     matches: (file) => file.path.toLowerCase().endsWith(".skl"),
     component: defineAsyncComponent(() => import("../components/gui/SkillViewer.vue")),
   },
+  {
+    id: "quest",
+    label: "任务",
+    readOnly: false,
+    matches: (file) => file.path.toLowerCase().endsWith(".qst"),
+    component: defineAsyncComponent(() => import("../components/gui/QuestViewer.vue")),
+  },
 ];
 
 export function getGUIProvider(file: GUIFile): GUIProvider | null {

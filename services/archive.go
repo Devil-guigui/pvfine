@@ -823,6 +823,25 @@ func (s *ArchiveService) SearchItems(query string, cursor int, limit int) (*Sear
 }
 
 func (s *ArchiveService) searchScoped(query string, cursor int, limit int, exact, itemsOnly bool, excludeID, scope string) (*SearchResult, error) {
+	return s.searchScopedRecords(query, cursor, limit, exact, itemsOnly, excludeID, scope, false)
+}
+
+// SearchQuestTargets searches registered dungeon, monster, or NPC IDs before pagination.
+func (s *ArchiveService) SearchQuestTargets(kind, query string, cursor, limit int) (*SearchResult, error) {
+	var scope string
+	switch kind {
+	case "dungeon", "monster", "npc":
+		scope = kind
+	default:
+		return nil, fmt.Errorf("不支持的任务查询类型: %s", kind)
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 30
+	}
+	return s.searchScopedRecords(query, cursor, limit, false, false, "", scope, true)
+}
+
+func (s *ArchiveService) searchScopedRecords(query string, cursor int, limit int, exact, itemsOnly bool, excludeID, scope string, registeredOnly bool) (*SearchResult, error) {
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()
 	res := &SearchResult{Hits: []*SearchHit{}, NextCursor: -1}
@@ -836,7 +855,7 @@ func (s *ArchiveService) searchScoped(query string, cursor int, limit int, exact
 		if s.c.indexStatus.State == IndexStateError {
 			return nil, errors.New(s.c.indexStatus.Error)
 		}
-		result, err := s.c.diskIndex.searchScoped(query, cursor, limit, exact, itemsOnly, excludeID, scope)
+		result, err := s.c.diskIndex.searchScopedRecords(query, cursor, limit, exact, itemsOnly, excludeID, scope, registeredOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -873,6 +892,9 @@ func (s *ArchiveService) searchScoped(query string, cursor int, limit int, exact
 	for ; i < len(records) && len(res.Hits) < limit; i++ {
 		record := &records[i]
 		if !advancedPathInScope(record.hit.Path, scope) {
+			continue
+		}
+		if registeredOnly && record.hit.ID == "" {
 			continue
 		}
 		if excludeID != "" && record.hit.ID == excludeID {

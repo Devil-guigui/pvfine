@@ -235,6 +235,13 @@ export function SearchItems(query: string, cursor: number, limit: number): $Canc
 }
 
 /**
+ * SearchQuestTargets searches registered dungeon, monster, or NPC IDs before pagination.
+ */
+export function SearchQuestTargets(kind: string, query: string, cursor: number, limit: number): $CancellablePromise<$models.SearchResult | null> {
+    return $Call.ByID(750277207, kind, query, cursor, limit);
+}
+
+/**
  * SelectImportFilesDialog opens the native multi-selection picker without
  * changing the current archive. The returned paths can be previewed first.
  */

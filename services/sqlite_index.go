@@ -1089,6 +1089,10 @@ func (i *sqliteArchiveIndex) search(query string, cursor, limit int, exact bool)
 }
 
 func (i *sqliteArchiveIndex) searchScoped(query string, cursor, limit int, exact, itemsOnly bool, excludeID, scope string) (*SearchResult, error) {
+	return i.searchScopedRecords(query, cursor, limit, exact, itemsOnly, excludeID, scope, false)
+}
+
+func (i *sqliteArchiveIndex) searchScopedRecords(query string, cursor, limit int, exact, itemsOnly bool, excludeID, scope string, registeredOnly bool) (*SearchResult, error) {
 	i.dbMu.RLock()
 	defer i.dbMu.RUnlock()
 	result := &SearchResult{Hits: []*SearchHit{}, NextCursor: -1}
@@ -1104,6 +1108,9 @@ func (i *sqliteArchiveIndex) searchScoped(query string, cursor, limit int, exact
 	}
 	where := "rowid>?"
 	args := []any{cursor}
+	if registeredOnly {
+		where += " AND record_id<>''"
+	}
 	if excludeID != "" {
 		where += " AND record_id<>?"
 		args = append(args, excludeID)
