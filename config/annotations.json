@@ -26135,6 +26135,1399 @@
         "content": "情境对话与概率"
       },
       "group": "aic"
+    },
+    {
+      "id": "etc.upgrade.section.table",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table"
+      },
+      "annotation": {
+        "title": "强化数据表",
+        "type": "text",
+        "content": "新版含 [table type]，类型 normal 是当前 GUI 的编辑目标，每级 24 个数值；多张 [table] 按各自类型区分。无类型的旧版单表每级 17 项，不能套用新版索引。等级按记录顺序从 +1 开始。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.section.table-type",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table type"
+      },
+      "annotation": {
+        "title": "强化表类型与数据",
+        "type": "text",
+        "content": "首项是类型字符串，后续每级 24 项。已确认 normal 为强化、amplify 为增幅。下列字段位置仅针对已核对的 normal/amplify 24 项布局；其他类型的语义须另外核对。从 0 开始：武器失败率/操作/降级参数在 8/10/11；防具在 9/12/13；共用材料 ID/数量在 14/15。其余字段尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table-type.0",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 0
+      },
+      "annotation": {
+        "title": "升级类型",
+        "type": "enum",
+        "values": {
+          "normal": "强化（normal）",
+          "amplify": "增幅（amplify）"
+        }
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table-type.8",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 8,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "武器失败率",
+        "type": "text",
+        "content": "分母 100000；成功率 = (100000 - 原值) / 100000。原值 20000 对应成功率 80%。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table-type.9",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 9,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "防具失败率",
+        "type": "text",
+        "content": "分母 100000；成功率 = (100000 - 原值) / 100000。武器与防具独立设置。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table-type.10",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 10,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "武器失败操作",
+        "type": "enum",
+        "content": "1 不处理，2 降级，3 损坏。",
+        "values": {
+          "1": "不处理（保级）",
+          "2": "降级",
+          "3": "损坏"
+        }
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table-type.11",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 11,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "武器降级参数",
+        "type": "text",
+        "content": "失败操作为 2 时使用的原始降级参数；为 1/3 时 GUI 写入 0。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table-type.12",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 12,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "防具失败操作",
+        "type": "enum",
+        "content": "1 不处理，2 降级，3 损坏。",
+        "values": {
+          "1": "不处理（保级）",
+          "2": "降级",
+          "3": "损坏"
+        }
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table-type.13",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 13,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "防具降级参数",
+        "type": "text",
+        "content": "失败操作为 2 时使用的原始降级参数；为 1/3 时 GUI 写入 0。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table-type.14",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 14,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "消耗道具",
+        "type": "reference",
+        "content": "武器与防具共用的材料 ID。",
+        "relation": "物品"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table-type.15",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 15,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "消耗数量",
+        "type": "text",
+        "content": "武器与防具共用的材料数量。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table.6",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 6,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版失败率",
+        "type": "text",
+        "content": "仅无类型 17 项旧表：分母 100000，成功率 = (100000 - 原值) / 100000。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table.7",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 7,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版失败操作",
+        "type": "enum",
+        "content": "仅无类型 17 项旧表：1 不处理，2 降级，3 损坏。",
+        "values": {
+          "1": "不处理（保级）",
+          "2": "降级",
+          "3": "损坏"
+        }
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table.8",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 8,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版降级参数",
+        "type": "text",
+        "content": "仅无类型 17 项旧表：失败操作为 2 时使用的降级参数。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table.9",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 9,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版消耗道具",
+        "type": "reference",
+        "content": "仅无类型 17 项旧表的材料 ID。",
+        "relation": "物品"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.table.10",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 10,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版消耗数量",
+        "type": "text",
+        "content": "仅无类型 17 项旧表的材料数量。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.section.safe-upgrade",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "safe upgrade"
+      },
+      "annotation": {
+        "title": "安全强化",
+        "type": "text",
+        "content": "安全强化每条 8 个整数：原始等级、未确认字段 1、失败率、失败补正、未确认字段 4、材料 ID、材料数量、金币消耗。原始等级 0～11 在 GUI 显示 +1～+12；失败率分母 100000，补正单位尚未确认。失败不降级。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.safe-upgrade.0",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 0,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全强化 · 原始等级",
+        "type": "text",
+        "content": "0 对应 +1，11 对应 +12；保存时保留原始值。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.safe-upgrade.1",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 1,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全强化 · 未确认字段 1",
+        "type": "text",
+        "content": "含义尚未确认，GUI 隐藏并保留。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.safe-upgrade.2",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 2,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全强化 · 失败率",
+        "type": "text",
+        "content": "分母 100000。原值 94000 = 失败率 94%，成功率 6%；GUI 直接编辑失败率。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.safe-upgrade.3",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 3,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全强化 · 失败补正",
+        "type": "text",
+        "content": "失败累积的补正参数，单位和具体算法未确认，按原始整数编辑。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.safe-upgrade.4",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 4,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全强化 · 未确认字段 4",
+        "type": "text",
+        "content": "含义尚未确认，GUI 隐藏并保留。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.safe-upgrade.5",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 5,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全强化 · 消耗道具",
+        "type": "reference",
+        "content": "安全升级材料 ID。",
+        "relation": "物品"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.safe-upgrade.6",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 6,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全强化 · 消耗数量",
+        "type": "text",
+        "content": "安全升级材料数量。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.safe-upgrade.7",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 7,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全强化 · 金币消耗",
+        "type": "text",
+        "content": "安全升级金币消耗原始值。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.upgrade.section.stat-weights-by-rarity",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "stat weights by rarity"
+      },
+      "annotation": {
+        "title": "按稀有度的属性权重",
+        "type": "text",
+        "content": "属性权重数组。旧版六项映射不能直接套用到新版更多项的数据；当前各位置及对应属性须按版本确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.section.table",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table"
+      },
+      "annotation": {
+        "title": "增幅数据表",
+        "type": "text",
+        "content": "新版含 [table type]，类型 amplify 是当前 GUI 的编辑目标，每级 24 个数值；多张 [table] 按各自类型区分。无类型的旧版单表每级 17 项，不能套用新版索引。等级按记录顺序从 +1 开始。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.section.table-type",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table type"
+      },
+      "annotation": {
+        "title": "增幅表类型与数据",
+        "type": "text",
+        "content": "首项是类型字符串，后续每级 24 项。已确认 normal 为强化、amplify 为增幅。下列字段位置仅针对已核对的 normal/amplify 24 项布局；其他类型的语义须另外核对。从 0 开始：武器失败率/操作/降级参数在 8/10/11；防具在 9/12/13；共用材料 ID/数量在 14/15。其余字段尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table-type.0",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 0
+      },
+      "annotation": {
+        "title": "升级类型",
+        "type": "enum",
+        "values": {
+          "normal": "强化（normal）",
+          "amplify": "增幅（amplify）"
+        }
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table-type.8",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 8,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "武器失败率",
+        "type": "text",
+        "content": "分母 100000；成功率 = (100000 - 原值) / 100000。原值 20000 对应成功率 80%。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table-type.9",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 9,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "防具失败率",
+        "type": "text",
+        "content": "分母 100000；成功率 = (100000 - 原值) / 100000。武器与防具独立设置。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table-type.10",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 10,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "武器失败操作",
+        "type": "enum",
+        "content": "1 不处理，2 降级，3 损坏。",
+        "values": {
+          "1": "不处理（保级）",
+          "2": "降级",
+          "3": "损坏"
+        }
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table-type.11",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 11,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "武器降级参数",
+        "type": "text",
+        "content": "失败操作为 2 时使用的原始降级参数；为 1/3 时 GUI 写入 0。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table-type.12",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 12,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "防具失败操作",
+        "type": "enum",
+        "content": "1 不处理，2 降级，3 损坏。",
+        "values": {
+          "1": "不处理（保级）",
+          "2": "降级",
+          "3": "损坏"
+        }
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table-type.13",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 13,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "防具降级参数",
+        "type": "text",
+        "content": "失败操作为 2 时使用的原始降级参数；为 1/3 时 GUI 写入 0。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table-type.14",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 14,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "消耗道具",
+        "type": "reference",
+        "content": "武器与防具共用的材料 ID。",
+        "relation": "物品"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table-type.15",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table type",
+        "index": 15,
+        "recordTokens": 24,
+        "offset": 1
+      },
+      "annotation": {
+        "title": "消耗数量",
+        "type": "text",
+        "content": "武器与防具共用的材料数量。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table.6",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 6,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版失败率",
+        "type": "text",
+        "content": "仅无类型 17 项旧表：分母 100000，成功率 = (100000 - 原值) / 100000。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table.7",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 7,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版失败操作",
+        "type": "enum",
+        "content": "仅无类型 17 项旧表：1 不处理，2 降级，3 损坏。",
+        "values": {
+          "1": "不处理（保级）",
+          "2": "降级",
+          "3": "损坏"
+        }
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table.8",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 8,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版降级参数",
+        "type": "text",
+        "content": "仅无类型 17 项旧表：失败操作为 2 时使用的降级参数。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table.9",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 9,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版消耗道具",
+        "type": "reference",
+        "content": "仅无类型 17 项旧表的材料 ID。",
+        "relation": "物品"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.table.10",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 10,
+        "recordTokens": 17
+      },
+      "annotation": {
+        "title": "旧版消耗数量",
+        "type": "text",
+        "content": "仅无类型 17 项旧表的材料数量。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.section.safe-upgrade",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "safe upgrade"
+      },
+      "annotation": {
+        "title": "安全增幅",
+        "type": "text",
+        "content": "安全增幅每条 8 个整数：原始等级、未确认字段 1、失败率、失败补正、未确认字段 4、材料 ID、材料数量、金币消耗。原始等级 0～11 在 GUI 显示 +1～+12；失败率分母 100000，补正单位尚未确认。失败不降级。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.safe-upgrade.0",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 0,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全增幅 · 原始等级",
+        "type": "text",
+        "content": "0 对应 +1，11 对应 +12；保存时保留原始值。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.safe-upgrade.1",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 1,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全增幅 · 未确认字段 1",
+        "type": "text",
+        "content": "含义尚未确认，GUI 隐藏并保留。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.safe-upgrade.2",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 2,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全增幅 · 失败率",
+        "type": "text",
+        "content": "分母 100000。原值 94000 = 失败率 94%，成功率 6%；GUI 直接编辑失败率。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.safe-upgrade.3",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 3,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全增幅 · 失败补正",
+        "type": "text",
+        "content": "失败累积的补正参数，单位和具体算法未确认，按原始整数编辑。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.safe-upgrade.4",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 4,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全增幅 · 未确认字段 4",
+        "type": "text",
+        "content": "含义尚未确认，GUI 隐藏并保留。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.safe-upgrade.5",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 5,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全增幅 · 消耗道具",
+        "type": "reference",
+        "content": "安全升级材料 ID。",
+        "relation": "物品"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.safe-upgrade.6",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 6,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全增幅 · 消耗数量",
+        "type": "text",
+        "content": "安全升级材料数量。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.safe-upgrade.7",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "safe upgrade",
+        "index": 7,
+        "recordTokens": 8
+      },
+      "annotation": {
+        "title": "安全增幅 · 金币消耗",
+        "type": "text",
+        "content": "安全升级金币消耗原始值。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.amplify.section.stat-weights-by-rarity",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "stat weights by rarity"
+      },
+      "annotation": {
+        "title": "按稀有度的属性权重",
+        "type": "text",
+        "content": "属性权重数组。旧版六项映射不能直接套用到新版更多项的数据；当前各位置及对应属性须按版本确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.table",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table"
+      },
+      "annotation": {
+        "title": "锻造等级表",
+        "type": "text",
+        "content": "每级 4 项：属性系数 A、属性系数 B、成功率、材料消耗倍率。按记录顺序对应 +1 起的锻造等级。成功率分母 10000；锻造失败不损坏、不降级。A/B 的具体属性含义尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.table.0",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 0,
+        "recordTokens": 4
+      },
+      "annotation": {
+        "title": "属性系数 A",
+        "type": "text",
+        "content": "原始属性系数，具体作用尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.table.1",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 1,
+        "recordTokens": 4
+      },
+      "annotation": {
+        "title": "属性系数 B",
+        "type": "text",
+        "content": "原始属性系数，具体作用尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.table.2",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 2,
+        "recordTokens": 4
+      },
+      "annotation": {
+        "title": "锻造成功率",
+        "type": "text",
+        "content": "分母 10000；原值 750 = 成功率 7.5%。这是成功率，不是强化表的失败率。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.table.3",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "table",
+        "index": 3,
+        "recordTokens": 4
+      },
+      "annotation": {
+        "title": "材料消耗倍率",
+        "type": "text",
+        "content": "锻造等级对应的材料倍率，结合装备等级数量基数等参数计算实际消耗；取整规则尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.separate-upgrade-max",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "separate upgrade max"
+      },
+      "annotation": {
+        "title": "最大锻造等级",
+        "type": "text",
+        "content": "可进行的最大锻造等级。修改此值不会自动补齐 [table]、特效或其他等级参数。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.separate-upgrade-max.0",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "separate upgrade max",
+        "index": 0
+      },
+      "annotation": {
+        "title": "最大锻造等级",
+        "type": "text",
+        "content": "示例 8 表示最高锻造 +8。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.level",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "level"
+      },
+      "annotation": {
+        "title": "锻造等级参数（待确认）",
+        "type": "text",
+        "content": "示例值 8 与锻造表的记录数一致；确切用途尚未确认，不等同于已确认的 [separate upgrade max]。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.item-weights-by-grade",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "item weights by grade"
+      },
+      "annotation": {
+        "title": "锻造材料 · 装备等级表",
+        "type": "text",
+        "content": "每条 3 项：装备等级、材料 ID、数量基数。3326 为当前配置材料 ID。数量是基数，最终消耗还受锻造倍率和其他参数影响。两表的选择条件与取整方式尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.item-weights-by-grade.0",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "item weights by grade",
+        "index": 0,
+        "recordTokens": 3
+      },
+      "annotation": {
+        "title": "装备等级",
+        "type": "text"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.item-weights-by-grade.1",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "item weights by grade",
+        "index": 1,
+        "recordTokens": 3
+      },
+      "annotation": {
+        "title": "消耗道具",
+        "type": "reference",
+        "relation": "物品"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.item-weights-by-grade.2",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "item weights by grade",
+        "index": 2,
+        "recordTokens": 3
+      },
+      "annotation": {
+        "title": "材料数量基数",
+        "type": "text"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.item-weights-by-grade-100lv",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "item weights by grade 100lv"
+      },
+      "annotation": {
+        "title": "锻造材料 · 100lv 表",
+        "type": "text",
+        "content": "每条 3 项：装备等级、材料 ID、数量基数。3326 为当前配置材料 ID。数量是基数，最终消耗还受锻造倍率和其他参数影响。两表的选择条件与取整方式尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.item-weights-by-grade-100lv.0",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "item weights by grade 100lv",
+        "index": 0,
+        "recordTokens": 3
+      },
+      "annotation": {
+        "title": "装备等级",
+        "type": "text"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.item-weights-by-grade-100lv.1",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "item weights by grade 100lv",
+        "index": 1,
+        "recordTokens": 3
+      },
+      "annotation": {
+        "title": "消耗道具",
+        "type": "reference",
+        "relation": "物品"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.item-weights-by-grade-100lv.2",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "token",
+        "section": "item weights by grade 100lv",
+        "index": 2,
+        "recordTokens": 3
+      },
+      "annotation": {
+        "title": "材料数量基数",
+        "type": "text"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.item-weights-by-rarity",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "item weights by rarity"
+      },
+      "annotation": {
+        "title": "锻造材料稀有度权重",
+        "type": "text",
+        "content": "示例 9 项。疑似按装备稀有度的材料消耗倍率；具体位置映射尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.item-weights-by-rarity-100lv",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "item weights by rarity 100lv"
+      },
+      "annotation": {
+        "title": "锻造材料稀有度权重（100lv）",
+        "type": "text",
+        "content": "示例 9 项。具体稀有度映射及与普通表的选择条件尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.stat-weights-by-rarity",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "stat weights by rarity"
+      },
+      "annotation": {
+        "title": "锻造属性稀有度权重",
+        "type": "text",
+        "content": "示例 9 项。疑似按稀有度的属性倍率，不能套用旧版强化六项映射。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.weapon-weights",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "weapon weights"
+      },
+      "annotation": {
+        "title": "武器权重（待确认）",
+        "type": "text",
+        "content": "样例全部为 1；类别映射及具体作用尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.separate-upgrade-effect",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "separate upgrade effect"
+      },
+      "annotation": {
+        "title": "锻造特效参数",
+        "type": "text",
+        "content": "样例每级 6 项、共 8 组。前三项疑似 RGB 颜色，后三项含义尚未确认，不能当作已确认的时间或亮度字段。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.activestatus-upgrade-dungeon",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "activestatus upgrade dungeon"
+      },
+      "annotation": {
+        "title": "地下城异常状态增益（待确认）",
+        "type": "text",
+        "content": "样例每级 1 项，共 8 项。名称提示与地下城异常状态增益相关，含义和单位尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.activestatus-upgrade-pvp",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "activestatus upgrade pvp"
+      },
+      "annotation": {
+        "title": "PVP 异常状态增益（待确认）",
+        "type": "text",
+        "content": "样例每级 1 项，共 8 项。具体含义和单位尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.anti-evil-upgrade",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "anti evil upgrade"
+      },
+      "annotation": {
+        "title": "抗魔增益（待确认）",
+        "type": "text",
+        "content": "样例 64 项，可按每级 8 项分组；具体列映射及用途尚未确认。"
+      },
+      "group": "etc"
+    },
+    {
+      "id": "etc.forge.section.genuine-buffer-option-apply-weapon",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "genuine buffer option apply weapon"
+      },
+      "annotation": {
+        "title": "武器增益参数（待确认）",
+        "type": "text",
+        "content": "样例 9 项；具体含义尚未确认。"
+      },
+      "group": "etc"
     }
   ]
 }

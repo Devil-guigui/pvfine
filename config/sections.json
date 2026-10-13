@@ -17616,9 +17616,9 @@
         "section": "separate upgrade effect"
       },
       "annotation": {
-        "title": "独立升级效果",
-        "content": "独立升级效果\n单独(装备、道具等)升级时触发的特殊效果配置。\n\n单独升级效果",
-        "type": "text"
+        "title": "锻造特效参数",
+        "type": "text",
+        "content": "锻造特效的具体布局须按文件确认。etc/upgrade_separate.etc 当前样例每级 6 项：前三项疑似 RGB，后三项含义尚未确认。"
       },
       "group": "etc"
     },
@@ -17742,9 +17742,9 @@
         "section": "stat weights by rarity"
       },
       "annotation": {
-        "title": "按稀有度属性权重",
-        "content": "[stat weights by rarity]\n\t0.4\t0.7\t1\t1.25\t1.4\t1.1\n[/stat weights by rarity]\n控制强化附加的无视攻击（物理，魔法）比率，\n6个数值对应[普通]-[高级]-[稀有]-[神器]-[史诗]-[异界（勇者）]6种类型，\n例如修改第一个数值0.4改1.4，相应的游戏里强化[普通]级装备的无视攻击也会提高\n同理控制增幅的路径{ etc/amplifyupgrade.etc }也有这个标签，对应增幅附加的四维\n\nstat weights by rarity",
-        "type": "text"
+        "title": "按稀有度的属性权重",
+        "type": "text",
+        "content": "按稀有度划分的属性权重。旧版六项常见顺序为普通、高级、稀有、神器、史诗、异界；此顺序仅是旧版参考。新版样例存在九项，新增位置与属性含义须另行确认，不能沿用六项映射。"
       },
       "group": "etc"
     },
@@ -17868,9 +17868,9 @@
         "section": "table"
       },
       "annotation": {
-        "title": "强化/增幅属性表(17列)",
-        "content": "强化/增幅属性（从左到右，共17列）\n\n1、\n2、\n3、\n4、\n5、\n6、\n7、概率 [计算公式]：(100000-X) / 100000\n    （人话就是数字越小成功率越大，设置0就是100%成功）\n8、失败时（1保级  2降级  3损坏）\n9、保级时：写0\n      降级时：写多少就掉多少级\n      损坏时：写0\n10、需求材料编号\n11、需求材料消耗数量\n12、\n13、\n14、\n15、\n16、\n17、\n\n强化/增幅属性（从左到右）",
-        "type": "text"
+        "title": "数据表（结构由文件决定）",
+        "type": "text",
+        "content": "[table] 的列数与字段含义取决于文件和版本。强化/增幅旧版无类型表每级 17 项；新版 [table type] 类型字段后每级 24 项；etc/upgrade_separate.etc 的锻造表每级 4 项。不能把旧版 17 列解释套用到所有 .etc 文件。"
       },
       "group": "etc"
     },

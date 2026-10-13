@@ -156,6 +156,229 @@
         "tokensPerLine": 4,
         "offset": 3
       }
+    },
+    {
+      "id": "etc.upgrade.table",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table"
+      },
+      "format": {
+        "tokensPerLine": 17
+      }
+    },
+    {
+      "id": "etc.upgrade.table-type",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table type"
+      },
+      "format": {
+        "tokensPerLine": 24,
+        "offset": 1
+      }
+    },
+    {
+      "id": "etc.upgrade.safe-upgrade",
+      "match": {
+        "glob": "etc/upgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "safe upgrade"
+      },
+      "format": {
+        "tokensPerLine": 8
+      }
+    },
+    {
+      "id": "etc.amplify.table",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table"
+      },
+      "format": {
+        "tokensPerLine": 17
+      }
+    },
+    {
+      "id": "etc.amplify.table-type",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table type"
+      },
+      "format": {
+        "tokensPerLine": 24,
+        "offset": 1
+      }
+    },
+    {
+      "id": "etc.amplify.safe-upgrade",
+      "match": {
+        "glob": "etc/amplifyupgrade.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "safe upgrade"
+      },
+      "format": {
+        "tokensPerLine": 8
+      }
+    },
+    {
+      "id": "etc.forge.table",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "table"
+      },
+      "format": {
+        "tokensPerLine": 4
+      }
+    },
+    {
+      "id": "etc.forge.item-weights-by-grade",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "item weights by grade"
+      },
+      "format": {
+        "tokensPerLine": 3
+      }
+    },
+    {
+      "id": "etc.forge.item-weights-by-grade-100lv",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "item weights by grade 100lv"
+      },
+      "format": {
+        "tokensPerLine": 3
+      }
+    },
+    {
+      "id": "etc.forge.item-weights-by-rarity",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "item weights by rarity"
+      },
+      "format": {
+        "tokensPerLine": 9
+      }
+    },
+    {
+      "id": "etc.forge.item-weights-by-rarity-100lv",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "item weights by rarity 100lv"
+      },
+      "format": {
+        "tokensPerLine": 9
+      }
+    },
+    {
+      "id": "etc.forge.stat-weights-by-rarity",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "stat weights by rarity"
+      },
+      "format": {
+        "tokensPerLine": 9
+      }
+    },
+    {
+      "id": "etc.forge.separate-upgrade-effect",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "separate upgrade effect"
+      },
+      "format": {
+        "tokensPerLine": 6
+      }
+    },
+    {
+      "id": "etc.forge.activestatus-upgrade-dungeon",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "activestatus upgrade dungeon"
+      },
+      "format": {
+        "tokensPerLine": 1
+      }
+    },
+    {
+      "id": "etc.forge.activestatus-upgrade-pvp",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "activestatus upgrade pvp"
+      },
+      "format": {
+        "tokensPerLine": 1
+      }
+    },
+    {
+      "id": "etc.forge.anti-evil-upgrade",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "anti evil upgrade"
+      },
+      "format": {
+        "tokensPerLine": 8
+      }
+    },
+    {
+      "id": "etc.forge.genuine-buffer-option-apply-weapon",
+      "match": {
+        "glob": "etc/upgrade_separate.etc"
+      },
+      "target": {
+        "kind": "section",
+        "section": "genuine buffer option apply weapon"
+      },
+      "format": {
+        "tokensPerLine": 9
+      }
     }
   ]
 }
