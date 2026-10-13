@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-// Both resources use the same versioned bundle: PVFC, version, PKCS#8 length,
+// All resources use the same versioned bundle: PVFC, version, PKCS#8 length,
 // sealed-table length, DER, 32-byte metadata, sealed table. Parameters never
 // appear as source literals or in decoder errors.
 //
@@ -21,6 +21,9 @@ var paged110EmbeddedClient []byte
 
 //go:embed assets/clients/100cn.bin
 var paged100CNEmbeddedClient []byte
+
+//go:embed assets/clients/115us.bin
+var paged115EmbeddedClient []byte
 
 type bundledPagedClient struct {
 	sealed   []byte
@@ -42,7 +45,8 @@ func bundledPagedClients() []bundledPagedClient {
 		for _, resource := range []struct {
 			data    []byte
 			profile formatProfile
-		}{{paged110EmbeddedClient, paged110Profile}, {paged100CNEmbeddedClient, paged100CNProfile}} {
+		}{{paged110EmbeddedClient, paged110Profile}, {paged100CNEmbeddedClient, paged100CNProfile},
+			{paged115EmbeddedClient, paged115Profile}} {
 			if client, err := decodeBundledPagedClient(resource.data, resource.profile); err == nil {
 				bundledClientState.clients = append(bundledClientState.clients, client)
 			}

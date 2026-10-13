@@ -3,6 +3,7 @@ package pvf
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -15,6 +16,9 @@ import (
 
 // ErrCancelled is returned by ExtractTo when the cancel callback fires.
 var ErrCancelled = errors.New("pvf: unpack cancelled")
+
+// ErrPagedCapacity means the edited archive exceeds its client's sealed table.
+var ErrPagedCapacity = errors.New("pvf: 编辑后归档超出配套页表容量，无法保存；请减少新增内容或使用容量更大的对应客户端配套数据")
 
 // SaveAs writes the archive (with pending edits applied) to path.
 // The write is atomic: data lands in a temp file that is renamed over path,
@@ -209,7 +213,7 @@ type chunkOut struct {
 }
 
 // rebuild produces the complete archive bytes with edits applied.
-func (a *Archive) rebuild() ([]byte, error) {
+func (a *Archive) rebuild() (result []byte, err error) {
 	// Classify edits.
 	modifiedChunks := map[int32]bool{}
 	var newFiles []int32
@@ -226,6 +230,21 @@ func (a *Archive) rebuild() ([]byte, error) {
 	for chunk := range a.removedSpans {
 		modifiedChunks[chunk] = true
 	}
+	// Rebuilding adjusts offsets in touched chunks before capacity is known.
+	// Restore their original spans on failure so pending edits can be retried.
+	originalItems := make(map[int]fileItem)
+	for i, item := range a.items {
+		if item.chunk < 0 || item.chunk >= int32(len(a.groups)) || modifiedChunks[item.chunk] {
+			originalItems[i] = item
+		}
+	}
+	defer func() {
+		if err != nil {
+			for i, item := range originalItems {
+				a.items[i] = item
+			}
+		}
+	}()
 
 	// Pass 1: per-chunk output. Untouched chunks are copied as raw encrypted
 	// bytes; modified chunks are rebuilt, re-compressed and re-encrypted.
@@ -318,6 +337,25 @@ func (a *Archive) rebuild() ([]byte, error) {
 		binary.LittleEndian.PutUint32(grpi[i*8+4:], uint32(outs[i].origSize))
 	}
 	cryptSeed(a.keys.grpi.seed, a.keys.grpi.magic, grpi)
+
+	// Recompression can grow the name pools enough to cross the sealed table's
+	// page limit. Try denser pools before rejecting, without rewriting body
+	// chunks that were not edited. Check before changing the header or writing.
+	if a.IsPaged() {
+		baseSize := int64(headerSize) + int64(len(table)) + int64(len(hashBytes)) + int64(len(grpi)) + int64(cumulative)
+		if err := validatePagedCapacity(baseSize+int64(len(nameBytes)), a.pageKeys); err != nil {
+			denseNames, compressErr := a.buildNameTableLevel(zlib.BestCompression)
+			if compressErr != nil {
+				return nil, compressErr
+			}
+			if len(denseNames) < len(nameBytes) {
+				nameBytes = denseNames
+			}
+			if err := validatePagedCapacity(baseSize+int64(len(nameBytes)), a.pageKeys); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	// Header.
 	a.hdr.FileCount = int32(len(a.items))

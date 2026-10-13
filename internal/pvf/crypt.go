@@ -80,8 +80,15 @@ func applyGuard(b []byte) {
 }
 
 func zlibCompress(data []byte) ([]byte, error) {
+	return zlibCompressLevel(data, zlib.DefaultCompression)
+}
+
+func zlibCompressLevel(data []byte, level int) ([]byte, error) {
 	var buf bytes.Buffer
-	zw := zlib.NewWriter(&buf)
+	zw, err := zlib.NewWriterLevel(&buf, level)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := zw.Write(data); err != nil {
 		return nil, err
 	}

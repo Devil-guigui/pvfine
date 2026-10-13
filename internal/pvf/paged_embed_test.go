@@ -14,13 +14,16 @@ func TestEmbeddedPageKeyCandidates(t *testing.T) {
 		t.Fatal("100CN sealed sidecar length changed")
 	}
 	candidates := loadSealedPageKeyCandidates(t.TempDir())
-	if len(candidates) != 2 || !bytes.Equal(candidates[0], mustBundledPagedClient(t, FormatPaged110).sealed) ||
-		!bytes.Equal(candidates[1], mustBundledPagedClient(t, FormatPaged100CN).sealed) {
-		t.Fatal("missing sidecar did not select both bundled candidates")
+	if len(candidates) != 3 || !bytes.Equal(candidates[0], mustBundledPagedClient(t, FormatPaged110).sealed) ||
+		!bytes.Equal(candidates[1], mustBundledPagedClient(t, FormatPaged100CN).sealed) ||
+		!bytes.Equal(candidates[2], mustBundledPagedClient(t, FormatPaged115).sealed) {
+		t.Fatal("missing sidecar did not select all bundled candidates")
 	}
-	candidates[1][0] ^= 1
-	if bytes.Equal(candidates[1], mustBundledPagedClient(t, FormatPaged100CN).sealed) {
-		t.Fatal("candidate aliases embedded asset")
+	for i, client := range bundledPagedClients() {
+		candidates[i][0] ^= 1
+		if bytes.Equal(candidates[i], client.sealed) {
+			t.Fatal("candidate aliases embedded asset")
+		}
 	}
 	for _, external := range [][]byte{nil, []byte("archive-specific sealed table")} {
 		dir := t.TempDir()
@@ -37,11 +40,11 @@ func TestEmbeddedPageKeyCandidates(t *testing.T) {
 func TestRealBundledPagedClient(t *testing.T) {
 	path := os.Getenv(testFileEnv)
 	version := os.Getenv("PVF_TEST_CLIENT_VERSION")
-	if path == "" || (version != "100CN" && version != "110US") {
+	if path == "" || (version != "100CN" && version != "110US" && version != "115US") {
 		t.Skip("bundled client fixture required")
 	}
 	dir := t.TempDir()
-	// No external files: both the sealed table and client come from the binary.
+	// No external files: the sealed table and client come from the binary.
 	a, err := OpenWithSidecars(path, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +78,8 @@ func TestRealBundledPagedClient(t *testing.T) {
 
 func TestBundledPagedClientParameters(t *testing.T) {
 	clients := bundledPagedClients()
-	if len(clients) != 2 || clients[0].profile.id != FormatPaged110 || clients[1].profile.id != FormatPaged100CN {
+	if len(clients) != 3 || clients[0].profile.id != FormatPaged110 || clients[1].profile.id != FormatPaged100CN ||
+		clients[2].profile.id != FormatPaged115 {
 		t.Fatal("bundled client identity or order is invalid")
 	}
 	for _, client := range clients {
@@ -91,7 +95,8 @@ func TestBundledPagedClientRejectsInvalidResources(t *testing.T) {
 		data           []byte
 		profile, other formatProfile
 	}{{paged110EmbeddedClient, paged110Profile, paged100CNProfile},
-		{paged100CNEmbeddedClient, paged100CNProfile, paged110Profile}} {
+		{paged100CNEmbeddedClient, paged100CNProfile, paged110Profile},
+		{paged115EmbeddedClient, paged115Profile, paged110Profile}} {
 		t.Run(resource.profile.id, func(t *testing.T) {
 			if _, err := decodeBundledPagedClient(resource.data, resource.other); !errors.Is(err, errBundledPagedClient) {
 				t.Fatal("resource accepted with another client's content rules")

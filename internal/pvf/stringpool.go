@@ -2,6 +2,7 @@ package pvf
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"fmt"
 	"strings"
@@ -303,6 +304,10 @@ func (a *Archive) appendUTF16StringLocked(s string) int32 {
 // differently, and writing them with the 90US key made the section unreadable
 // (the size field decodes to garbage, so the parser skips the pool entirely).
 func (a *Archive) buildNameTable() ([]byte, error) {
+	return a.buildNameTableLevel(zlib.DefaultCompression)
+}
+
+func (a *Archive) buildNameTableLevel(level int) ([]byte, error) {
 	var prefix [8]byte
 	if a.nameSize >= 8 && a.data != nil {
 		copy(prefix[:], a.data[a.nameOff:a.nameOff+8])
@@ -318,14 +323,14 @@ func (a *Archive) buildNameTable() ([]byte, error) {
 		maskW = xorStrW
 	}
 	var err error
-	if out, err = appendNameSection(out, a.keys.strA, maskA, a.strA); err != nil {
+	if out, err = appendNameSectionLevel(out, a.keys.strA, maskA, a.strA, level); err != nil {
 		return nil, err
 	}
-	return appendNameSection(out, a.keys.strW, maskW, a.strW)
+	return appendNameSectionLevel(out, a.keys.strW, maskW, a.strW, level)
 }
 
-func appendNameSection(out []byte, section sectionKey, xorC uint32, raw []byte) ([]byte, error) {
-	compressed, err := zlibCompress(raw)
+func appendNameSectionLevel(out []byte, section sectionKey, xorC uint32, raw []byte, level int) ([]byte, error) {
+	compressed, err := zlibCompressLevel(raw, level)
 	if err != nil {
 		return nil, err
 	}

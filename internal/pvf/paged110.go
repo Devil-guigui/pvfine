@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -223,7 +224,9 @@ func encryptPageGuards(data, pageKeys []byte) int {
 // to w with the page protection re-applied, streaming page by page so a save
 // never needs a second copy of the whole container in memory.
 func writePageGuarded(w io.Writer, logical, pageKeys []byte) error {
-	pages := len(pageKeys) / paged110PageKeySize
+	if err := validatePagedCapacity(int64(len(logical)), pageKeys); err != nil {
+		return err
+	}
 	guard := make([]byte, paged110PageGuardSize)
 	for i := 0; ; i++ {
 		off := i * paged110PageSize
@@ -235,9 +238,9 @@ func writePageGuarded(w io.Writer, logical, pageKeys []byte) error {
 			end = len(logical)
 		}
 		head := off + paged110PageGuardSize
-		if i >= pages || head > len(logical) {
-			// Beyond the key table (or a trailing partial page) nothing is
-			// guarded; mirror decryptPageGuards, which stops there too.
+		if head > len(logical) {
+			// A trailing partial guard is not encrypted; mirror
+			// decryptPageGuards, which stops there too.
 			if _, err := w.Write(logical[off:end]); err != nil {
 				return err
 			}
@@ -256,6 +259,17 @@ func writePageGuarded(w io.Writer, logical, pageKeys []byte) error {
 			return err
 		}
 	}
+}
+
+// Validate before writing any bytes: the client cannot decrypt pages beyond
+// its sealed table, and adding local keys would not extend that client table.
+func validatePagedCapacity(size int64, pageKeys []byte) error {
+	capacity := int64(len(pageKeys)/paged110PageKeySize) * paged110PageSize
+	if size > capacity || len(pageKeys)%paged110PageKeySize != 0 {
+		return fmt.Errorf("%w（归档需要 %d 页，配套数据支持 %d 页）", ErrPagedCapacity,
+			(size+paged110PageSize-1)/paged110PageSize, len(pageKeys)/paged110PageKeySize)
+	}
+	return nil
 }
 
 // metadataKeyCandidates returns the AES keys that may wrap the page key table.
