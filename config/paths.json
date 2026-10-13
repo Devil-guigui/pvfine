@@ -236832,8 +236832,8 @@
         "kind": "path"
       },
       "annotation": {
-        "title": "护甲",
-        "type": "text"
+        "type": "text",
+        "title": "护肩"
       },
       "group": "path"
     },
@@ -241914,8 +241914,8 @@
         "kind": "path"
       },
       "annotation": {
-        "title": "防具.首饰",
-        "type": "text"
+        "type": "text",
+        "title": "公用装备"
       },
       "group": "path"
     },

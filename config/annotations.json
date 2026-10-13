@@ -9426,7 +9426,8 @@
           "[at priest]": "圣职者·女",
           "[demonic swordman]": "黑暗武士",
           "[demonic lancer]": "魔枪士",
-          "[creator mage]": "缔造者"
+          "[creator mage]": "缔造者",
+          "[archer]": "弓箭手"
         }
       },
       "group": "stk"
@@ -26468,6 +26469,84 @@
         "content": "样例 9 项；具体含义尚未确认。"
       },
       "group": "etc"
+    },
+    {
+      "id": "user.rule.eba6b239-f075-4871-8649-da1632941df5",
+      "match": {
+        "glob": "equipment/character/common/earring"
+      },
+      "target": {
+        "kind": "path"
+      },
+      "annotation": {
+        "title": "耳环",
+        "type": "text"
+      }
+    },
+    {
+      "id": "user.rule.01d093bc-ac51-4066-9875-0b10daa7b934",
+      "match": {
+        "glob": "equipment/character/common/talisman"
+      },
+      "target": {
+        "kind": "path"
+      },
+      "annotation": {
+        "type": "text",
+        "title": "护石"
+      }
+    },
+    {
+      "id": "user.rule.bb4abe2e-b205-4e2a-8466-f6747d91a453",
+      "match": {
+        "glob": "equipment/character/demoniclancer"
+      },
+      "target": {
+        "kind": "path"
+      },
+      "annotation": {
+        "type": "text",
+        "title": "魔枪士"
+      }
+    },
+    {
+      "id": "user.rule.722c9b61-8b13-44cc-a79d-be30041b2153",
+      "match": {
+        "glob": "equipment/character/archer"
+      },
+      "target": {
+        "kind": "path"
+      },
+      "annotation": {
+        "type": "text",
+        "title": "弓箭手"
+      }
+    },
+    {
+      "id": "user.rule.17b181c0-26f3-4c40-95ba-d67a8af5b9c5",
+      "match": {
+        "glob": "equipment/character/gunblader"
+      },
+      "target": {
+        "kind": "path"
+      },
+      "annotation": {
+        "type": "text",
+        "title": "枪剑士"
+      }
+    },
+    {
+      "id": "user.rule.3315ef07-5263-4007-a3f3-1ac3058d1f85",
+      "match": {
+        "glob": "equipment/character/knight"
+      },
+      "target": {
+        "kind": "path"
+      },
+      "annotation": {
+        "title": "守护者",
+        "type": "text"
+      }
     }
   ],
   "fields": [
@@ -26607,10 +26686,27 @@
         "title": "装备类型",
         "type": "enum",
         "values": {
-          "[amulet]": "首饰",
+          "[amulet]": "项链",
           "[armor]": "防具",
           "[title]": "称号",
-          "[weapon]": "武器"
+          "[weapon]": "武器",
+          "[coat]": "上衣",
+          "[pants]": "下装",
+          "[shoulder]": "护肩",
+          "[waist]": "腰带",
+          "[shoes]": "鞋子",
+          "[wrist]": "手镯",
+          "[ring]": "戒指",
+          "[support]": "辅助装备",
+          "[magic stone]": "魔法石",
+          "[earring]": "耳环",
+          "[talisman]": "护石",
+          "[title name]": "称号",
+          "[support weapon]": "副武器",
+          "[artifact blue]": "蓝色宠物装备",
+          "[artifact red]": "红色宠物装备",
+          "[artifact green]": "绿色宠物装备",
+          "[creature]": "宠物"
         }
       },
       "preview": {
@@ -26644,7 +26740,79 @@
           "katana": "太刀",
           "necklace": "项链",
           "ring": "戒指",
-          "sword": "巨剑"
+          "sword": "巨剑",
+          "cl coat": "上衣·布甲",
+          "ha coat": "上衣·重甲",
+          "la coat": "上衣·轻甲",
+          "lt coat": "上衣·皮甲",
+          "mt coat": "上衣·板甲",
+          "cl pants": "下装·布甲",
+          "ha pants": "下装·重甲",
+          "la pants": "下装·轻甲",
+          "lt pants": "下装·皮甲",
+          "mt pants": "下装·板甲",
+          "cl shoulder": "护肩·布甲",
+          "ha shoulder": "护肩·重甲",
+          "la shoulder": "护肩·轻甲",
+          "lt shoulder": "护肩·皮甲",
+          "mt shoulder": "护肩·板甲",
+          "cl waist": "腰带·布甲",
+          "ha waist": "腰带·重甲",
+          "la waist": "腰带·轻甲",
+          "lt waist": "腰带·皮甲",
+          "mt waist": "腰带·板甲",
+          "cl shoes": "鞋子·布甲",
+          "ha shoes": "鞋子·重甲",
+          "la shoes": "鞋子·轻甲",
+          "lt shoes": "鞋子·皮甲",
+          "mt shoes": "鞋子·板甲",
+          "wrist": "手镯",
+          "amulet": "项链",
+          "support": "辅助装备",
+          "magic stone": "魔法石",
+          "earring": "耳环",
+          "talisman": "护石",
+          "cbow": "强攻弩",
+          "ebow": "妖影弓",
+          "lbow": "玄机弓",
+          "sbow": "神弦弓",
+          "beamspear": "光枪",
+          "halberd": "战戟",
+          "javelin": "暗矛",
+          "pike": "长枪",
+          "bglove": "拳套",
+          "claw": "爪",
+          "gauntlet": "臂铠",
+          "knuckle": "手套",
+          "tonfa": "东方棍",
+          "coreswd": "能量剑",
+          "lblade": "长刀",
+          "mswd": "重剑",
+          "sblade": "小太刀",
+          "automatic": "自动手枪",
+          "bowgun": "手弩",
+          "hcannon": "手炮",
+          "musket": "步枪",
+          "revolver": "左轮",
+          "shield": "盾牌",
+          "broom": "扫把",
+          "pole": "棍",
+          "rod": "魔杖",
+          "spear": "矛",
+          "staff": "法杖",
+          "axe": "战斧",
+          "cross": "十字架",
+          "rosary": "念珠",
+          "scythe": "镰刀",
+          "totem": "图腾",
+          "beamswd": "光剑",
+          "club": "钝器",
+          "hsword": "巨剑",
+          "ssword": "短剑",
+          "chakraweapon": "苦无",
+          "dagger": "匕首",
+          "twinswd": "双剑",
+          "wand": "手杖"
         }
       },
       "preview": {
@@ -26741,7 +26909,8 @@
           "[priest]": "圣职者",
           "[swordman]": "鬼剑士",
           "[thief]": "暗夜使者",
-          "[gunblader]": "枪剑士"
+          "[gunblader]": "枪剑士",
+          "[archer]": "弓箭手"
         }
       },
       "preview": {
@@ -27204,7 +27373,8 @@
           "[mage]": "魔法师",
           "[priest]": "圣职者",
           "[swordman]": "鬼剑士",
-          "[thief]": "暗夜使者"
+          "[thief]": "暗夜使者",
+          "[archer]": "弓箭手"
         },
         "relation": "技能"
       },
