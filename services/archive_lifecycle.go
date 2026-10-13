@@ -33,6 +33,22 @@ func (g *archiveTaskGate) begin() func() {
 	for g.closing {
 		g.cond.Wait()
 	}
+	return g.beginLocked()
+}
+
+// tryBegin lets an existing task register follow-up work without waiting for
+// closeArchive, which may itself be waiting for that task to finish.
+func (g *archiveTaskGate) tryBegin() (func(), bool) {
+	g.mu.Lock()
+	g.ensureLocked()
+	if g.closing {
+		g.mu.Unlock()
+		return nil, false
+	}
+	return g.beginLocked(), true
+}
+
+func (g *archiveTaskGate) beginLocked() func() {
 	g.nextID++
 	id := g.nextID
 	done := make(chan struct{})

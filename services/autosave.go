@@ -317,7 +317,9 @@ func (s *AutosaveService) Restore() (ArchiveInfo, error) {
 	s.c.mu.RLock()
 	info, _ = s.c.archiveInfo()
 	s.c.mu.RUnlock()
-	s.c.scheduleArchiveMutations(a, summary)
+	if err := s.c.scheduleArchiveMutations(a, summary); err != nil {
+		return ArchiveInfo{}, err
+	}
 	emitEvent("archive:reloaded", info)
 	emitVersionState(s.c, "recovered")
 	return info, nil

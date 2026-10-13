@@ -13,9 +13,10 @@ import (
 // Like Archive, scanners require external synchronization with archive edits.
 // Callers may release their read lock between Next calls and abort on edits.
 type StringPoolScanner struct {
-	a    *Archive
-	wide bool
-	pos  int
+	a         *Archive
+	wide      bool
+	pos       int
+	wideStart int
 }
 
 func (a *Archive) NewStringPoolScanner() *StringPoolScanner { return &StringPoolScanner{a: a} }
@@ -28,7 +29,7 @@ func (s *StringPoolScanner) Next(ctx context.Context) (StringPoolEntry, bool, er
 		if !s.wide {
 			if s.pos >= len(s.a.strA) {
 				s.wide = true
-				s.pos = 0
+				s.pos = s.wideStart
 				continue
 			}
 			start := s.pos
@@ -56,6 +57,33 @@ func (s *StringPoolScanner) Next(ctx context.Context) (StringPoolEntry, bool, er
 			}
 		}
 	}
+}
+
+// StringPoolState validates append-only offsets without retaining pool bytes.
+// Callers must synchronize access with archive writes.
+type StringPoolState struct {
+	NarrowBytes, WideBytes int
+	NarrowHash, WideHash   [32]byte
+}
+
+func (a *Archive) StringPoolState() StringPoolState {
+	return StringPoolState{len(a.strA), len(a.strW), sha256.Sum256(a.strA), sha256.Sum256(a.strW)}
+}
+
+func (a *Archive) ExtendsStringPools(state StringPoolState) bool {
+	return len(a.strA) >= state.NarrowBytes && len(a.strW) >= state.WideBytes && sha256.Sum256(a.strA[:state.NarrowBytes]) == state.NarrowHash && sha256.Sum256(a.strW[:state.WideBytes]) == state.WideHash
+}
+
+func (a *Archive) NewAppendedStringPoolScanner(state StringPoolState) *StringPoolScanner {
+	return &StringPoolScanner{a: a, pos: state.NarrowBytes, wideStart: state.WideBytes}
+}
+
+// NewSelectedStringReferenceScanner decodes only the selected files, grouped
+// by chunk, instead of rescanning the archive's entire reference set.
+func (a *Archive) NewSelectedStringReferenceScanner(indexes []int32) *StringReferenceScanner {
+	order := append([]int32(nil), indexes...)
+	sort.Slice(order, func(x, y int) bool { return a.items[order[x]].chunk < a.items[order[y]].chunk })
+	return &StringReferenceScanner{a: a, order: order, chunkIndex: -1}
 }
 
 // StringReference is one pool offset referenced by a file. The pool iterator
@@ -210,6 +238,11 @@ func (a *Archive) SavedContentHash() (string, bool) {
 	if a.Modified() || len(a.data) == 0 {
 		return "", false
 	}
-	sum := sha256.Sum256(a.data)
-	return hex.EncodeToString(sum[:]), true
+	a.cacheMu.Lock()
+	defer a.cacheMu.Unlock()
+	if a.contentDigest == "" {
+		sum := sha256.Sum256(a.data)
+		a.contentDigest = hex.EncodeToString(sum[:])
+	}
+	return a.contentDigest, true
 }

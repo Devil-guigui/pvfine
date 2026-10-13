@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"path"
@@ -229,6 +230,13 @@ func (c *core) startSearchIndexWithOptions(force bool) {
 	startedAt := time.Now()
 	if c.diskIndex != nil {
 		index := c.diskIndex
+		if index.ready {
+			index.semanticInitialized = true
+			var fingerprint string
+			if index.db.QueryRow(`SELECT value FROM meta WHERE key='specs'`).Scan(&fingerprint) != nil || fingerprint != searchIndexSpecFingerprint(c.searchableListSpecsLocked()) {
+				index.ready, index.dirty = false, true
+			}
+		}
 		hasSnapshot := index.ready && !force && !index.dirty
 		index.ready = hasSnapshot
 		ctx, cancel := context.WithCancel(context.Background())
@@ -246,6 +254,7 @@ func (c *core) startSearchIndexWithOptions(force bool) {
 			emitEvent("archive:index-ready", status)
 			return
 		}
+		index.dirty = true
 		c.indexStatus = IndexStatus{State: IndexStateBuilding, Stage: "sqlite", OpenDurationMs: c.indexStatus.OpenDurationMs}
 		status := c.indexStatus
 		c.mu.Unlock()
@@ -315,7 +324,30 @@ func (c *core) startSearchIndexWithOptions(force bool) {
 func (c *core) buildSearchIndexSQLite(ctx context.Context, gen uint64, a *pvf.Archive, index *sqliteArchiveIndex, startedAt time.Time, force bool) {
 	specs := c.searchableListSpecs()
 	developmentLog("[pvfine:index] semantic build started: force=%t generation=%d files=%d specs=%d", force, gen, a.FileCount(), len(specs))
-	total, skipped, err := index.buildSemantic(ctx, c, a, specs, gen)
+	var total, skipped int
+	var err error
+	c.mu.RLock()
+	delta := !force && index.semanticInitialized
+	epoch := index.semanticEpoch
+	revision := c.batchRevision
+	c.mu.RUnlock()
+	if delta {
+		total, skipped, err = index.buildSemanticDelta(ctx, c, a, specs, gen)
+	} else {
+		total, skipped, err = index.buildSemantic(ctx, c, a, specs, gen)
+	}
+	if errors.Is(err, errIndexDeltaStale) {
+		c.mu.Lock()
+		if c.indexIsCurrentLocked(a, gen) {
+			retryForce := force || c.indexRefreshPendingForce
+			c.indexCancel = nil
+			c.mu.Unlock()
+			c.startSearchIndexWithOptions(retryForce)
+		} else {
+			c.mu.Unlock()
+		}
+		return
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			developmentLog("[pvfine:index] semantic build cancelled: generation=%d elapsed=%s", gen, time.Since(startedAt).Round(time.Millisecond))
@@ -353,8 +385,12 @@ func (c *core) buildSearchIndexSQLite(ctx context.Context, gen uint64, a *pvf.Ar
 		developmentLog("[pvfine:index] semantic build discarded: generation=%d elapsed=%s", gen, time.Since(startedAt).Round(time.Millisecond))
 		return
 	}
-	pendingRefresh = c.indexRefreshPending
+	pendingRefresh = c.indexRefreshPending || index.semanticPublishedEpoch != index.semanticEpoch || index.semanticPublishedRevision != c.batchRevision
 	pendingForce = c.indexRefreshPendingForce
+	index.semanticInitialized = true
+	if !delta && index.semanticEpoch == epoch && c.batchRevision == revision {
+		index.pendingPaths, index.pendingIDs = nil, nil
+	}
 	index.ready = true
 	if !pendingRefresh {
 		index.dirty = false
@@ -363,7 +399,12 @@ func (c *core) buildSearchIndexSQLite(ctx context.Context, gen uint64, a *pvf.Ar
 	if pendingRefresh {
 		stage = "refreshing"
 	}
-	c.indexStatus = IndexStatus{State: IndexStateReady, Stage: stage, Done: total, Total: total, Skipped: skipped, Refreshing: pendingRefresh, OpenDurationMs: c.indexStatus.OpenDurationMs, BuildDurationMs: elapsedMilliseconds(startedAt)}
+	state := IndexStateReady
+	if pendingRefresh {
+		state = IndexStateBuilding
+		index.ready = false
+	}
+	c.indexStatus = IndexStatus{State: state, Stage: stage, Done: total, Total: total, Skipped: skipped, Refreshing: pendingRefresh, OpenDurationMs: c.indexStatus.OpenDurationMs, BuildDurationMs: elapsedMilliseconds(startedAt)}
 	c.indexCancel = nil
 	c.indexRefreshPending = false
 	c.indexRefreshPendingForce = false
@@ -960,7 +1001,7 @@ func (c *core) setText(index int32, text string) (bool, string, error) {
 	c.editorText[index] = text
 	c.annotationRelations = make(map[string]map[string]*relationTarget)
 	c.editorAnnotation = editorAnnotationCache{}
-	c.invalidateAdvancedSearchLocked()
+	c.markAdvancedSearchStaleLocked(c.archive)
 	if c.diskIndex != nil {
 		if err := c.diskIndex.refreshFileMetadata(a, map[int32]struct{}{index: {}}); err != nil {
 			a.ClearMutations()
@@ -973,7 +1014,9 @@ func (c *core) setText(index int32, text string) (bool, string, error) {
 	delete(c.visualsByFile, index)
 	a.ClearMutations()
 	c.mu.Unlock()
-	c.scheduleArchiveMutations(a, summary)
+	if err := c.scheduleArchiveMutations(a, summary); err != nil {
+		return false, "", err
+	}
 	emitEvent("archive:advanced-search-stale", map[string]any{"fileIndex": index})
 	if versioned {
 		emitVersionState(c, "edited")
@@ -1046,14 +1089,16 @@ func (c *core) setPlaceholderText(index int32, tableIndex int32, key, text strin
 	versioned := c.versionRepo != nil
 	c.annotationRelations = make(map[string]map[string]*relationTarget)
 	c.editorAnnotation = editorAnnotationCache{}
-	c.invalidateAdvancedSearchLocked()
+	c.markAdvancedSearchStaleLocked(c.archive)
 	delete(c.visualsByFile, index)
 	if c.diskIndex == nil {
 		refreshArchiveIndexMetadataLocked(c, map[int32]struct{}{tableFileIndex: {}})
 	}
 	a.ClearMutations()
 	c.mu.Unlock()
-	c.scheduleArchiveMutations(a, summary)
+	if err := c.scheduleArchiveMutations(a, summary); err != nil {
+		return err
+	}
 	emitEvent("archive:advanced-search-stale", map[string]any{"fileIndex": index})
 	if versioned {
 		emitVersionState(c, "edited")

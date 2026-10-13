@@ -152,7 +152,7 @@ func parseTW(data []byte) (*Archive, error) {
 		}
 		index := int32(i)
 		a.pathIndex[path] = index
-		a.items = append(a.items, fileItem{nameOff: nameOffset(name), pathOff: nameOffset(dir), chunk: index})
+		a.items = append(a.items, fileItem{identity: nextFileIdentity.Add(1), nameOff: nameOffset(name), pathOff: nameOffset(dir), chunk: index})
 		tw.entries = append(tw.entries, e)
 		if path == "stringtable.bin" {
 			stringIndex = index
@@ -445,11 +445,13 @@ func (a *Archive) saveTW(w io.Writer) error {
 		if next.items[i].typ != item.typ {
 			return fmt.Errorf("TW 文件类型与路径或载荷不匹配（entry=%d）", i)
 		}
+		next.items[i].identity = item.identity
 	}
 	if err := a.writeContainer(w, packed); err != nil {
 		return err
 	}
 	a.data, a.hdr, a.tw = next.data, next.hdr, next.tw
+	a.contentDigest = ""
 	a.items, a.groups = next.items, next.groups
 	a.bodyOff = next.bodyOff
 	a.strA, a.strW = next.strA, next.strW

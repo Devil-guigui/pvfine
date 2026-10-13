@@ -262,13 +262,14 @@ func (s *BatchService) Apply(planID string, fileIndexes []int32) (BatchApplyResu
 		s.c.editorText[fileIndex] = row.afterText
 	}
 	mutationSummary := plan.archive.MutationsSince(mutationCheckpoint)
+	s.c.markAdvancedSearchStaleLocked(plan.archive)
 	plan.archive.ClearMutations()
 	s.c.batchRevision++
 	s.c.batchPlan = nil
 	s.c.invalidateScriptLocked()
 	s.c.editorAnnotation = editorAnnotationCache{}
 	s.c.annotationRelations = make(map[string]map[string]*relationTarget)
-	s.c.invalidateAdvancedSearchLocked()
+	s.c.markAdvancedSearchStaleLocked(s.c.archive)
 	info := plan.archive.Info()
 	revision := s.c.batchRevision
 	versioned := s.c.versionRepo != nil
@@ -285,7 +286,9 @@ func (s *BatchService) Apply(planID string, fileIndexes []int32) (BatchApplyResu
 	}
 	// One background update classifies all affected files together and avoids
 	// emitting one semantic-index invalidation per file.
-	s.c.scheduleArchiveMutations(plan.archive, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(plan.archive, mutationSummary); err != nil {
+		return BatchApplyResult{}, err
+	}
 	return BatchApplyResult{
 		AppliedFiles:  int32(len(ordered)),
 		FileIndexes:   ordered,

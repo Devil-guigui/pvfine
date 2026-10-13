@@ -207,14 +207,27 @@ func (s *ArchiveService) ImportFiles(sourcePaths []string, targetDir, mode strin
 	}
 	result.TargetDir = targetDir
 	result.Mode = mode
+	if len(stage.MutationsSince(0).Files) == 0 {
+		// An identical overwrite has no projection or semantic work to publish.
+		// In particular, do not reset a ready index with an empty mutation queue.
+		s.c.mu.Unlock()
+		return result, nil
+	}
 
 	// The staged archive is isolated, so prepare its directory/SQLite
 	// projection without holding the core lock. A concurrent archive mutation
 	// invalidates this import before it is installed.
 	revision := s.c.batchRevision
 	s.c.batchRevision++
+	incrementalSQLite := s.c.diskIndex != nil && s.c.diskIndex.entries != nil
 	s.c.mu.Unlock()
-	prepared, prepareErr := prepareArchiveDerivedIndexes(stage)
+	// A live SQLite projection can be updated in place after the revision
+	// check. Do not build a second database merely to overwrite existing files.
+	var prepared *preparedArchiveIndexes
+	var prepareErr error
+	if !incrementalSQLite {
+		prepared, prepareErr = prepareArchiveDerivedIndexes(stage)
+	}
 	s.c.mu.Lock()
 	if prepareErr != nil {
 		closePreparedArchiveIndexes(prepared)
@@ -226,21 +239,32 @@ func (s *ArchiveService) ImportFiles(sourcePaths []string, targetDir, mode strin
 		s.c.mu.Unlock()
 		return nil, ErrBatchPlanStale
 	}
+	var after pvfversion.ContentSnapshot
 	if s.c.versionRepo != nil {
-		after, snapshotErr := pvfversion.ContentSnapshotFromArchive(stage, targetPaths)
+		var snapshotErr error
+		after, snapshotErr = pvfversion.ContentSnapshotFromArchive(stage, targetPaths)
 		if snapshotErr != nil {
+			closePreparedArchiveIndexes(prepared)
 			s.c.mu.Unlock()
 			return nil, snapshotErr
 		}
+	}
+	var installErr error
+	if incrementalSQLite {
+		installErr = s.c.rebuildArchiveIndexesLocked(stage)
+	} else {
+		installErr = s.c.installPreparedArchiveIndexesLocked(stage, prepared, true)
+	}
+	if installErr != nil {
+		closePreparedArchiveIndexes(prepared)
+		s.c.mu.Unlock()
+		return nil, installErr
+	}
+	if s.c.versionRepo != nil {
 		if err := s.c.recordVersionMutationLocked("导入文件", before, after); err != nil {
 			s.c.mu.Unlock()
 			return nil, err
 		}
-	}
-	if err := s.c.installPreparedArchiveIndexesLocked(stage, prepared, true); err != nil {
-		closePreparedArchiveIndexes(prepared)
-		s.c.mu.Unlock()
-		return nil, err
 	}
 	mutationSummary := stage.MutationsSince(0)
 	stage.ClearMutations()
@@ -248,7 +272,9 @@ func (s *ArchiveService) ImportFiles(sourcePaths []string, targetDir, mode strin
 	versioned := s.c.versionRepo != nil
 	s.c.mu.Unlock()
 
-	s.c.scheduleArchiveMutations(stage, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(stage, mutationSummary); err != nil {
+		return nil, err
+	}
 	emitEvent("archive:changed", info)
 	emitEvent("archive:advanced-search-stale", map[string]any{"import": true})
 	if versioned {

@@ -28,13 +28,20 @@ import (
 const largeArchiveIndexThreshold = 100000
 
 type sqliteArchiveIndex struct {
-	dbMu     sync.RWMutex
-	db       *sql.DB
-	path     string
-	identity string
-	ready    bool
-	dirty    bool
-	tempDir  string
+	dbMu                      sync.RWMutex
+	db                        *sql.DB
+	path                      string
+	identity                  string
+	ready                     bool
+	dirty                     bool
+	tempDir                   string
+	entries                   []uint64 // projection index -> stable live entry identity
+	semanticInitialized       bool
+	semanticEpoch             uint64
+	semanticPublishedEpoch    uint64
+	semanticPublishedRevision uint64
+	pendingPaths              map[string]struct{}
+	pendingIDs                map[uint64]struct{}
 }
 
 func (i *sqliteArchiveIndex) refreshFileMetadata(a *pvf.Archive, indexes map[int32]struct{}) error {
@@ -45,6 +52,9 @@ func (i *sqliteArchiveIndex) refreshFileMetadata(a *pvf.Archive, indexes map[int
 	defer i.dbMu.Unlock()
 	if i.db == nil {
 		return nil
+	}
+	if err := i.detachCacheLocked(); err != nil {
+		return err
 	}
 	tx, err := i.db.Begin()
 	if err != nil {
@@ -62,6 +72,10 @@ func (i *sqliteArchiveIndex) refreshFileMetadata(a *pvf.Archive, indexes map[int
 		}
 		file := a.File(index)
 		if _, err := stmt.Exec(file.DataSize, file.DataType, archiveChangeKind(a, index), index); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE records SET size=?,data_type=? WHERE file_index=?`, file.DataSize, file.DataType, index); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -296,7 +310,7 @@ func (i *sqliteArchiveIndex) prepareSemanticCandidate(ctx context.Context, c *co
 	return candidateDB, candidatePath, nil
 }
 
-func (i *sqliteArchiveIndex) publishSemanticCandidate(c *core, a *pvf.Archive, gen uint64, candidateDB *sql.DB, candidatePath string) error {
+func (i *sqliteArchiveIndex) publishSemanticCandidate(c *core, a *pvf.Archive, gen uint64, candidateDB *sql.DB, candidatePath string, revision, epoch uint64) error {
 	if candidateDB == nil || candidatePath == "" {
 		return nil
 	}
@@ -308,6 +322,9 @@ func (i *sqliteArchiveIndex) publishSemanticCandidate(c *core, a *pvf.Archive, g
 	defer c.mu.Unlock()
 	if c.archive != a || c.indexGen != gen || c.diskIndex != i {
 		return context.Canceled
+	}
+	if c.batchRevision != revision || i.semanticEpoch != epoch {
+		return errIndexDeltaStale
 	}
 	i.dbMu.Lock()
 	defer i.dbMu.Unlock()
@@ -366,6 +383,7 @@ func (i *sqliteArchiveIndex) publishSemanticCandidate(c *core, a *pvf.Archive, g
 		_ = os.Remove(oldPath)
 	}
 	i.db = newDB
+	i.semanticPublishedEpoch, i.semanticPublishedRevision = epoch, revision
 	developmentLog("[pvfine:index] sqlite phase=publish elapsed=%s", time.Since(startedAt).Round(time.Millisecond))
 	return nil
 }
@@ -382,6 +400,9 @@ func archiveIndexIdentity(a *pvf.Archive) (string, string, error) {
 	h := sha256.New()
 	fmt.Fprintf(h, "metadata:%d\x00", searchIndexCacheVersion)
 	fmt.Fprintf(h, "%s\x00%d\x00%d\x00%d\x00%d\x00%d", filepath.Clean(path), info.Size(), info.ModTime().UnixNano(), a.FileCount(), a.Header().GroupCount, a.Header().BodySize)
+	if digest, clean := a.SavedContentHash(); clean {
+		fmt.Fprintf(h, "\x00content:%s", digest)
+	}
 	identity := hex.EncodeToString(h.Sum(nil))
 	return identity, filepath.Clean(path), nil
 }
@@ -423,6 +444,15 @@ func openSQLiteArchiveIndexContext(ctx context.Context, a *pvf.Archive) (*sqlite
 		identity = path
 		tempDir = dir
 	}
+	if tempDir == "" && a.Modified() {
+		// A recovered/modified workspace must never overwrite the clean cache
+		// whose identity was derived from the source PVF on disk.
+		dir, err := os.MkdirTemp("", "pvfine-index-session-")
+		if err != nil {
+			return nil, false, err
+		}
+		tempDir, path = dir, filepath.Join(dir, "index.db")
+	}
 
 	if !a.Modified() {
 		if db, openErr := openArchiveIndexDatabase(path, false); openErr == nil {
@@ -437,7 +467,7 @@ func openSQLiteArchiveIndexContext(ctx context.Context, a *pvf.Archive) (*sqlite
 					return nil, false, fmt.Errorf("upgrade SQLite file path index: %w", err)
 				}
 				developmentLog("[pvfine:index] sqlite file index cache hit: files=%d", a.FileCount())
-				return &sqliteArchiveIndex{db: db, path: path, identity: identity, ready: sqliteSemanticIndexReady(db)}, true, nil
+				return &sqliteArchiveIndex{db: db, path: path, identity: identity, ready: sqliteSemanticIndexReady(db), entries: archiveEntryIndexes(a)}, true, nil
 			}
 			_ = db.Close()
 		}
@@ -460,7 +490,7 @@ func openSQLiteArchiveIndexContext(ctx context.Context, a *pvf.Archive) (*sqlite
 		_ = os.Remove(tmpPath)
 		return nil, false, err
 	}
-	idx := &sqliteArchiveIndex{db: db, path: path, identity: identity, tempDir: tempDir}
+	idx := &sqliteArchiveIndex{db: db, path: path, identity: identity, tempDir: tempDir, entries: archiveEntryIndexes(a)}
 	fileIndexStartedAt := time.Now()
 	developmentLog("[pvfine:index] sqlite file index rebuild started: files=%d", a.FileCount())
 	if err := buildSQLiteFileIndexContext(ctx, db, a, identity); err != nil {
@@ -565,6 +595,10 @@ func pruneArchiveIndexCache(dir, current string) {
 }
 
 func sqliteIndexComplete(db *sql.DB, identity string) bool {
+	var schema string
+	if db.QueryRow(`SELECT value FROM meta WHERE key='schema'`).Scan(&schema) != nil || schema != "4" {
+		return false
+	}
 	var value string
 	if err := db.QueryRow("SELECT value FROM meta WHERE key='identity'").Scan(&value); err != nil {
 		return false
@@ -609,8 +643,10 @@ CREATE TABLE tags(file_index INTEGER NOT NULL, tag_id TEXT NOT NULL, name TEXT N
  PRIMARY KEY(file_index, tag_id, category));
 CREATE TABLE visuals(file_index INTEGER PRIMARY KEY, icon_path TEXT NOT NULL, icon_index INTEGER NOT NULL,
  field_path TEXT NOT NULL, field_index INTEGER NOT NULL, rarity INTEGER NOT NULL DEFAULT -1);
+CREATE TABLE semantic_dependencies(file_index INTEGER NOT NULL,dependency_path TEXT NOT NULL,PRIMARY KEY(file_index,dependency_path));
+CREATE INDEX semantic_dependencies_path ON semantic_dependencies(dependency_path,file_index);
 INSERT INTO dirs(path,parent,name,child_count) VALUES('','','',0);
-INSERT INTO meta(key,value) VALUES('schema','2'),('identity',?),('complete','0');
+INSERT INTO meta(key,value) VALUES('schema','4'),('identity',?),('complete','0');
 `
 	tx, err := db.Begin()
 	if err != nil {
@@ -688,7 +724,7 @@ CREATE INDEX dirs_parent_name ON dirs(parent,name);`); err != nil {
 	}
 	developmentLog("[pvfine:index] sqlite file index path indexes finished: elapsed=%s", time.Since(indexStartedAt).Round(time.Millisecond))
 	directoryCountsStartedAt := time.Now()
-	if _, err := tx.ExecContext(ctx, `UPDATE dirs SET child_count=(SELECT COUNT(*) FROM files WHERE parent=dirs.path)+(SELECT COUNT(*) FROM dirs child WHERE child.parent=dirs.path)`); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE dirs SET child_count=(SELECT COUNT(*) FROM files WHERE parent=dirs.path)+(SELECT COUNT(*) FROM dirs child WHERE child.parent=dirs.path AND child.path<>'')`); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -697,6 +733,7 @@ CREATE INDEX dirs_parent_name ON dirs(parent,name);`); err != nil {
 CREATE INDEX records_lower_name ON records(lower_name);
 CREATE INDEX records_lower_id ON records(lower_id);
 CREATE INDEX records_file ON records(file_index,id);
+CREATE INDEX records_list ON records(list_path,category,file_index);
 CREATE INDEX tags_file ON tags(file_index);`); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -710,6 +747,9 @@ CREATE INDEX tags_file ON tags(file_index);`); err != nil {
 
 func (i *sqliteArchiveIndex) buildSemantic(ctx context.Context, c *core, a *pvf.Archive, specs []searchableListSpec, gen uint64) (int, int, error) {
 	startedAt := time.Now()
+	c.mu.RLock()
+	revision, epoch := c.batchRevision, i.semanticEpoch
+	c.mu.RUnlock()
 	developmentLog("[pvfine:index] sqlite semantic rebuild begin: generation=%d files=%d specs=%d", gen, a.FileCount(), len(specs))
 	// Build into a complete candidate database so the live index remains
 	// readable and SQLite never has to make a large reader/writer transaction
@@ -777,7 +817,7 @@ func (i *sqliteArchiveIndex) buildSemantic(ctx context.Context, c *core, a *pvf.
 	if _, err := tx.Exec(`DROP INDEX IF EXISTS records_lower_path; DROP INDEX IF EXISTS records_lower_name; DROP INDEX IF EXISTS records_lower_id; DROP INDEX IF EXISTS records_file; DROP INDEX IF EXISTS tags_file`); err != nil {
 		return rollback(err)
 	}
-	if _, err := tx.Exec(`DELETE FROM records; DELETE FROM tags; DELETE FROM visuals; UPDATE meta SET value='0' WHERE key='complete'`); err != nil {
+	if _, err := tx.Exec(`DELETE FROM records; DELETE FROM tags; DELETE FROM visuals; DELETE FROM semantic_dependencies; UPDATE meta SET value='0' WHERE key='complete'`); err != nil {
 		return rollback(err)
 	}
 	developmentLog("[pvfine:index] sqlite phase=reset elapsed=%s", time.Since(resetStartedAt).Round(time.Millisecond))
@@ -910,6 +950,15 @@ func (i *sqliteArchiveIndex) buildSemantic(ctx context.Context, c *core, a *pvf.
 				fieldPath, fieldIndex = metadata.FieldImage.Path, metadata.FieldImage.Index
 			}
 			if _, written := visualsWritten[index]; !written {
+				c.mu.RLock()
+				dependencyErr := writeSemanticDependencies(ctx, tx, a, index, metadata)
+				c.mu.RUnlock()
+				if dependencyErr != nil {
+					_ = visualStmt.Close()
+					_ = tagStmt.Close()
+					_ = recordStmt.Close()
+					return rollback(dependencyErr)
+				}
 				if _, err := visualStmt.Exec(index, iconPath, iconIndex, fieldPath, fieldIndex, metadata.RarityValue()); err != nil {
 					_ = visualStmt.Close()
 					_ = tagStmt.Close()
@@ -943,6 +992,9 @@ FROM files f WHERE NOT EXISTS (SELECT 1 FROM records r WHERE r.file_index=f.file
 	if _, err := tx.Exec(`UPDATE meta SET value='1' WHERE key='complete'`); err != nil {
 		return rollback(err)
 	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta VALUES('specs',?)`, searchIndexSpecFingerprint(specs)); err != nil {
+		return rollback(err)
+	}
 	indexStartedAt := time.Now()
 	if _, err := tx.Exec(`CREATE INDEX records_lower_path ON records(lower_path);
 CREATE INDEX records_lower_name ON records(lower_name);
@@ -957,13 +1009,21 @@ CREATE INDEX tags_file ON tags(file_index);`); err != nil {
 		return 0, 0, err
 	}
 	if candidateDB != nil {
-		if err := i.publishSemanticCandidate(c, a, gen, candidateDB, candidatePath); err != nil {
+		if err := i.publishSemanticCandidate(c, a, gen, candidateDB, candidatePath, revision, epoch); err != nil {
 			log.Printf("[pvfine:index] sqlite phase=publish failed: total=%s error=%v", time.Since(startedAt).Round(time.Millisecond), err)
 			return 0, 0, err
 		}
 		candidatePublished = true
 	}
-	i.ready = true
+	if candidateDB == nil {
+		// Private test/build connections have no runtime publication callback.
+		// Live candidates publish their stamp inside the guarded SQL swap; an
+		// older worker must never overwrite a newer generation after that swap.
+		c.mu.Lock()
+		i.ready = i.semanticEpoch == epoch
+		i.semanticPublishedEpoch, i.semanticPublishedRevision = epoch, revision
+		c.mu.Unlock()
+	}
 	developmentLog("[pvfine:index] sqlite semantic rebuild committed: records=%d file_fallback=%d tags=%d visuals=%d skipped=%d commit=%s total=%s", count, fileRowsAdded, count, len(visualsWritten), skipped, time.Since(commitStartedAt).Round(time.Millisecond), time.Since(startedAt).Round(time.Millisecond))
 	return count, skipped, nil
 }
@@ -1045,6 +1105,9 @@ func (i *sqliteArchiveIndex) suggest(prefix string, limit int) ([]string, error)
 }
 
 func (i *sqliteArchiveIndex) tags(fileIndex int32) ([]TreeTag, error) {
+	if i.dirty {
+		return nil, nil
+	}
 	i.dbMu.RLock()
 	defer i.dbMu.RUnlock()
 	// The rarity lives with the file's visuals; a file without a visuals row
@@ -1067,6 +1130,9 @@ LEFT JOIN visuals v ON v.file_index=t.file_index WHERE t.file_index=? ORDER BY t
 }
 
 func (i *sqliteArchiveIndex) visuals(fileIndex int32) fileVisuals {
+	if i.dirty {
+		return fileVisuals{rarity: pvf.RarityUnknown}
+	}
 	i.dbMu.RLock()
 	defer i.dbMu.RUnlock()
 	var iconPath, fieldPath string
@@ -1093,6 +1159,9 @@ func (i *sqliteArchiveIndex) searchScoped(query string, cursor, limit int, exact
 }
 
 func (i *sqliteArchiveIndex) searchScopedRecords(query string, cursor, limit int, exact, itemsOnly bool, excludeID, scope string, registeredOnly bool) (*SearchResult, error) {
+	if i.dirty && (registeredOnly || itemsOnly || exact) {
+		return nil, ErrSearchIndexing
+	}
 	i.dbMu.RLock()
 	defer i.dbMu.RUnlock()
 	result := &SearchResult{Hits: []*SearchHit{}, NextCursor: -1}
@@ -1134,7 +1203,11 @@ func (i *sqliteArchiveIndex) searchScopedRecords(query string, cursor, limit int
 		}
 	}
 	batchLimit := limit*32 + 1
-	querySQL := `SELECT rowid,name,record_id,path,category,size,data_type,file_index FROM records WHERE ` + where + ` ORDER BY rowid`
+	source := "records"
+	if i.dirty {
+		source = `(SELECT file_index+1 AS rowid,name,lower_name,'' AS record_id,'' AS lower_id,path,lower_path,'file' AS category,size,data_type,file_index FROM files)`
+	}
+	querySQL := `SELECT rowid,name,record_id,path,category,size,data_type,file_index FROM ` + source + ` WHERE ` + where + ` ORDER BY rowid`
 	// Wildcards are filtered below, so a SQL row limit can produce an empty
 	// page before reaching any matches. Stream until the page is full or EOF.
 	if !wildcard {
@@ -1179,6 +1252,9 @@ func (i *sqliteArchiveIndex) searchScopedRecords(query string, cursor, limit int
 }
 
 func (i *sqliteArchiveIndex) indexedNames(fileIndex int32) (string, error) {
+	if i.dirty {
+		return "", ErrSearchIndexing
+	}
 	values, err := i.indexedNameValues(fileIndex)
 	if err != nil {
 		return "", err

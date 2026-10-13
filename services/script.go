@@ -707,13 +707,14 @@ func (s *ScriptService) Apply(planID string, changeKeys []string) (ScriptApplyRe
 		appliedIndexes = append(appliedIndexes, index)
 	}
 	mutationSummary := plan.archive.MutationsSince(mutationCheckpoint)
+	s.c.markAdvancedSearchStaleLocked(plan.archive)
 	plan.archive.ClearMutations()
 	s.c.batchRevision++
 	s.c.batchPlan = nil
 	s.c.invalidateScriptPlanLocked()
 	s.c.editorAnnotation = editorAnnotationCache{}
 	s.c.annotationRelations = make(map[string]map[string]*relationTarget)
-	s.c.invalidateAdvancedSearchLocked()
+	s.c.markAdvancedSearchStaleLocked(s.c.archive)
 	info := plan.archive.Info()
 	revision := s.c.batchRevision
 	versioned := s.c.versionRepo != nil
@@ -741,7 +742,9 @@ func (s *ScriptService) Apply(planID string, changeKeys []string) (ScriptApplyRe
 	if versioned {
 		emitVersionState(s.c, "script-applied")
 	}
-	s.c.scheduleArchiveMutations(plan.archive, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(plan.archive, mutationSummary); err != nil {
+		return ScriptApplyResult{}, err
+	}
 	return ScriptApplyResult{
 		AppliedFiles: int32(len(ordered)), FileIndexes: appliedIndexes,
 		ModifiedCount: info.ModifiedCount, Revision: revision, Structural: structural,

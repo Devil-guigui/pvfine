@@ -17,10 +17,32 @@ type searchIndexMutationImpact struct {
 	pendingList map[int32]struct{}
 }
 
-func (c *core) scheduleArchiveMutations(a *pvf.Archive, summary pvf.MutationSummary) {
+func (c *core) scheduleArchiveMutations(a *pvf.Archive, summary pvf.MutationSummary) error {
 	if a == nil || len(summary.Files) == 0 {
-		return
+		return nil
 	}
+	c.mu.Lock()
+	if c.archive == a {
+		if err := c.syncSQLiteMutationMetadataLocked(a, summary); err != nil {
+			c.mu.Unlock()
+			return err
+		}
+	}
+	if c.archive == a && c.advancedDisk != nil && c.advancedDisk.published.Load() {
+		c.markAdvancedSearchStaleLocked(a)
+		for _, mutation := range summary.Files {
+			if mutation.Identity != 0 {
+				c.advancedDisk.pendingIDs[mutation.Identity] = struct{}{}
+			}
+		}
+	}
+	if c.archive == a && c.diskIndex != nil {
+		c.diskIndex.queueSemanticMutations(summary)
+		c.mu.Unlock()
+		c.startSearchIndex()
+		return nil
+	}
+	c.mu.Unlock()
 	impact := c.classifyArchiveMutations(a, summary)
 	if !impact.pathOnly && !impact.semantic {
 		// An initial build may still be scanning the archive. Keep its
@@ -47,13 +69,13 @@ func (c *core) scheduleArchiveMutations(a *pvf.Archive, summary pvf.MutationSumm
 		if startInitialBuild {
 			c.startSearchIndex()
 		}
-		return
+		return nil
 	}
 
 	c.mu.Lock()
 	if c.archive != a {
 		c.mu.Unlock()
-		return
+		return nil
 	}
 	if impact.pathOnly || impact.semantic {
 		c.searchIndexDeltaPending = true
@@ -85,6 +107,7 @@ func (c *core) scheduleArchiveMutations(a *pvf.Archive, summary pvf.MutationSumm
 	} else {
 		c.startSearchIndex()
 	}
+	return nil
 }
 
 func (c *core) classifyArchiveMutations(a *pvf.Archive, summary pvf.MutationSummary) searchIndexMutationImpact {

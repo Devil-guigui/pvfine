@@ -184,10 +184,11 @@ func (a *Archive) AddFile(relPath string, data []byte, dataType int32) int32 {
 	}
 	dir, name := splitDirName(normalized)
 	item := fileItem{
-		nameOff: a.StringOffset(name),
-		pathOff: a.StringOffset(dir),
-		chunk:   -1,
-		typ:     dataType,
+		identity: nextFileIdentity.Add(1),
+		nameOff:  a.StringOffset(name),
+		pathOff:  a.StringOffset(dir),
+		chunk:    -1,
+		typ:      dataType,
 	}
 	if data != nil {
 		item.size = int32(len(data))

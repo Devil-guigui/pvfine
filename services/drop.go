@@ -177,13 +177,14 @@ func (s *DropService) Apply(request DropRateApplyRequest) (DropRateApplyResult, 
 	}
 
 	mutationSummary := a.MutationsSince(mutationCheckpoint)
+	s.c.markAdvancedSearchStaleLocked(a)
 	a.ClearMutations()
 	s.c.batchRevision++
 	s.c.batchPlan = nil
 	s.c.invalidateScriptLocked()
 	s.c.editorAnnotation = editorAnnotationCache{}
 	s.c.annotationRelations = make(map[string]map[string]*relationTarget)
-	s.c.invalidateAdvancedSearchLocked()
+	s.c.markAdvancedSearchStaleLocked(s.c.archive)
 	for _, index := range fileIndexes {
 		delete(s.c.editorText, index)
 		delete(s.c.visualsByFile, index)
@@ -193,7 +194,9 @@ func (s *DropService) Apply(request DropRateApplyRequest) (DropRateApplyResult, 
 	versioned := s.c.versionRepo != nil
 	s.c.mu.Unlock()
 
-	s.c.scheduleArchiveMutations(a, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(a, mutationSummary); err != nil {
+		return DropRateApplyResult{}, err
+	}
 	emitEvent("archive:advanced-search-stale", map[string]any{"dropRate": true})
 	emitEvent("archive:batch-applied", map[string]any{
 		"fileIndexes": fileIndexes, "modifiedCount": info.ModifiedCount,

@@ -128,7 +128,9 @@ func (s *FileGUIService) ApplyShopEdit(req ShopEditRequest) (*ShopEditResult, er
 		return nil, err
 	}
 	if len(result.Files) > 0 {
-		s.c.scheduleArchiveMutations(a, summary)
+		if err := s.c.scheduleArchiveMutations(a, summary); err != nil {
+			return nil, err
+		}
 		indexes := make([]int32, 0, len(result.Files))
 		for _, f := range result.Files {
 			indexes = append(indexes, f.FileIndex)
@@ -563,7 +565,7 @@ func (s *FileGUIService) applyShopEditLocked(req ShopEditRequest) (*ShopEditResu
 		s.c.batchRevision++
 		s.c.batchPlan = nil
 		s.c.invalidateScriptLocked()
-		s.c.invalidateAdvancedSearchLocked()
+		s.c.markAdvancedSearchStaleLocked(s.c.archive)
 		s.c.editorAnnotation = editorAnnotationCache{}
 		s.c.annotationRelations = make(map[string]map[string]*relationTarget)
 		if s.c.editorText == nil {

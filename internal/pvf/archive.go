@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pvfine/internal/buildmode"
@@ -27,10 +28,22 @@ type Header struct {
 }
 
 type fileItem struct {
-	nameOff, pathOff int32 // magic offsets into the string pools
-	chunk            int32 // body chunk index
-	off, size        int32 // location of the file payload inside the decompressed chunk
-	typ              int32 // TypeScript / TypeUnicode
+	identity         uint64 // process-local identity, preserved by clones and removal
+	nameOff, pathOff int32  // magic offsets into the string pools
+	chunk            int32  // body chunk index
+	off, size        int32  // location of the file payload inside the decompressed chunk
+	typ              int32  // TypeScript / TypeUnicode
+}
+
+var nextFileIdentity atomic.Uint64
+
+// FileIdentity identifies a live entry independently of its compact file index.
+// It survives CloneForBatch and RemoveFiles, but is never serialized to PVF.
+func (a *Archive) FileIdentity(index int32) uint64 {
+	if index < 0 || index >= int32(len(a.items)) {
+		return 0
+	}
+	return a.items[index].identity
 }
 
 type removedFileSpan struct {
@@ -51,9 +64,10 @@ const (
 // FileMutation is one effective file-level change. Path is captured before a
 // structural edit can renumber the remaining entries.
 type FileMutation struct {
-	Index int32
-	Path  string
-	Kind  MutationKind
+	Index    int32
+	Identity uint64 // captured before structural edits can compact the file table
+	Path     string
+	Kind     MutationKind
 }
 
 // MutationSummary describes changes recorded after a mutation checkpoint.
@@ -70,10 +84,11 @@ type groupItem struct{ compSize, origSize int32 }
 type Archive struct {
 	cacheMu sync.Mutex
 
-	data  []byte // original file bytes (nil for archives built from scratch)
-	hdr   Header
-	guard bool
-	keys  keySet // per-section LCG seeds (standard or recovered)
+	data          []byte // original file bytes (nil for archives built from scratch)
+	contentDigest string // cached hash of immutable data; cacheMu protects it
+	hdr           Header
+	guard         bool
+	keys          keySet // per-section LCG seeds (standard or recovered)
 
 	// format separates container transport from client content conventions.
 	// pageKeys retains the per-page state needed to write the container back.
@@ -178,11 +193,11 @@ func (a *Archive) PendingEdits() []FileMutation {
 	for i := range a.items {
 		index := int32(i)
 		if a.items[i].chunk < 0 {
-			result = append(result, FileMutation{Index: index, Path: a.Path(index), Kind: MutationAdded})
+			result = append(result, FileMutation{Index: index, Identity: a.FileIdentity(index), Path: a.Path(index), Kind: MutationAdded})
 			continue
 		}
 		if _, ok := a.overlay[index]; ok {
-			result = append(result, FileMutation{Index: index, Path: a.Path(index), Kind: MutationModified})
+			result = append(result, FileMutation{Index: index, Identity: a.FileIdentity(index), Path: a.Path(index), Kind: MutationModified})
 		}
 	}
 	return result
@@ -192,7 +207,13 @@ func (a *Archive) recordMutation(index int32, path string, kind MutationKind) {
 	if a == nil || path == "" {
 		return
 	}
-	a.mutations = append(a.mutations, FileMutation{Index: index, Path: path, Kind: kind})
+	// A ready projection must not disagree with direct placeholder lookups.
+	// Ordinary text/raw edits and structural changes share this journal entry
+	// point, including late localization files and mapping-list replacements.
+	if strings.HasSuffix(strings.ToLower(path), ".str") || IsStringTableMappingPath(path) {
+		a.InvalidateStringTables()
+	}
+	a.mutations = append(a.mutations, FileMutation{Index: index, Identity: a.FileIdentity(index), Path: path, Kind: kind})
 }
 
 type chunkCacheEntry struct {
@@ -294,6 +315,7 @@ func parseDetected(detected detectedArchive) (*Archive, error) {
 	a.items = make([]fileItem, a.hdr.FileCount)
 	for i := range a.items {
 		it := &a.items[i]
+		it.identity = nextFileIdentity.Add(1)
 		base := a.tableOff + i*0x18
 		it.nameOff = int32(binary.LittleEndian.Uint32(data[base:]))
 		it.pathOff = int32(binary.LittleEndian.Uint32(data[base+4:]))

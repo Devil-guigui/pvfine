@@ -16,15 +16,15 @@ func (d *advancedSQLite) addAdvancedNameMatches(c *core, db *sql.DB, key advance
 		c.mu.RUnlock()
 		return context.Canceled
 	}
-	if c.indexStatus.State != IndexStateReady {
+	if c.indexStatus.State != IndexStateReady || c.diskIndex != nil && c.diskIndex.dirty {
 		c.mu.RUnlock()
-		return d.ctx.Err()
+		return d.requestContext().Err()
 	}
 	disk := c.diskIndex
 	if disk != nil {
 		c.mu.RUnlock()
 	}
-	tx, err := db.BeginTx(d.ctx, nil)
+	tx, err := db.BeginTx(d.requestContext(), nil)
 	if err != nil {
 		if disk == nil {
 			c.mu.RUnlock()
@@ -32,7 +32,7 @@ func (d *advancedSQLite) addAdvancedNameMatches(c *core, db *sql.DB, key advance
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(d.ctx, `INSERT OR IGNORE INTO name_matches VALUES(?,?)`)
+	stmt, err := tx.PrepareContext(d.requestContext(), `INSERT OR IGNORE INTO name_matches VALUES(?,?)`)
 	if err != nil {
 		if disk == nil {
 			c.mu.RUnlock()
@@ -46,7 +46,7 @@ func (d *advancedSQLite) addAdvancedNameMatches(c *core, db *sql.DB, key advance
 				!advancedPathInScope(record.hit.Path, key.scope) || !match(record.hit.Name) {
 				continue
 			}
-			if _, err = stmt.ExecContext(d.ctx, record.hit.FileIndex, record.hit.Name); err != nil {
+			if _, err = stmt.ExecContext(d.requestContext(), record.hit.FileIndex, record.hit.Name); err != nil {
 				break
 			}
 		}
@@ -65,7 +65,7 @@ func (d *advancedSQLite) addAdvancedNameMatches(c *core, db *sql.DB, key advance
 				args = append(args, strings.ToLower(key.query))
 			}
 			var rows *sql.Rows
-			rows, err = disk.db.QueryContext(d.ctx, query, args...)
+			rows, err = disk.db.QueryContext(d.requestContext(), query, args...)
 			if err == nil {
 				for rows.Next() {
 					var index int32
@@ -74,7 +74,7 @@ func (d *advancedSQLite) addAdvancedNameMatches(c *core, db *sql.DB, key advance
 						break
 					}
 					if match(name) {
-						_, err = stmt.ExecContext(d.ctx, index, name)
+						_, err = stmt.ExecContext(d.requestContext(), index, name)
 						if err != nil {
 							break
 						}

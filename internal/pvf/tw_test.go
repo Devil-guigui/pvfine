@@ -147,8 +147,12 @@ func TestTWRoundTrip(t *testing.T) {
 	if err := b.SetText(ref, "[name]\n`再次修改`"); err != nil {
 		t.Fatal(err)
 	}
+	identityBeforeSave := b.FileIdentity(ref)
 	if err := b.SaveTo(io.Discard); err != nil {
 		t.Fatal(err)
+	}
+	if b.FileIdentity(ref) != identityBeforeSave {
+		t.Fatal("TW save changed surviving entry identity")
 	}
 	if b.Modified() {
 		t.Fatal("save did not adopt TW state")

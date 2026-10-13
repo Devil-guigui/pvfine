@@ -260,7 +260,9 @@ func (s *FileGUIService) ApplyWorldDropEdit(req WorldDropEditRequest) (*WorldDro
 		return nil, err
 	}
 	if len(result.Files) > 0 {
-		s.c.scheduleArchiveMutations(archive, summary)
+		if err := s.c.scheduleArchiveMutations(archive, summary); err != nil {
+			return nil, err
+		}
 		emitEvent("archive:batch-applied", map[string]any{"source": "world-drop-gui", "structural": false, "fileIndexes": []int32{req.FileIndex}, "revision": result.Revision, "modifiedCount": result.ModifiedCount})
 		emitEvent("archive:advanced-search-stale", map[string]any{"worldDrop": true})
 		emitVersionState(s.c, "world-drop-edited")
@@ -355,7 +357,7 @@ func (s *FileGUIService) applyWorldDropEditLocked(req WorldDropEditRequest) (*Wo
 	s.c.batchRevision++
 	s.c.batchPlan = nil
 	s.c.invalidateScriptLocked()
-	s.c.invalidateAdvancedSearchLocked()
+	s.c.markAdvancedSearchStaleLocked(s.c.archive)
 	s.c.editorAnnotation = editorAnnotationCache{}
 	s.c.annotationRelations = make(map[string]map[string]*relationTarget)
 	if s.c.editorText == nil {

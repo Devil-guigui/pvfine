@@ -2,12 +2,12 @@ package services
 
 import (
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,10 +19,11 @@ import (
 // Version field and the SQLite index identity string. Bump it whenever the
 // persisted metadata shape changes, so older files are rebuilt instead of
 // silently missing a newer field.
-const searchIndexCacheVersion = 3
+const searchIndexCacheVersion = 4
 
-// searchIndexCacheIdentity is the cheap source identity used by the search
-// cache. The archive itself is already read before the index starts, but the
+// searchIndexCacheIdentity is the cheap source identity used by the small JSON
+// cache. SQLite additionally validates the loaded content digest. The archive
+// itself is already read before the index starts, but the
 // product-level policy intentionally uses the source file's size and mtime
 // rather than hashing the whole 110page container again.
 type searchIndexCacheIdentity struct {
@@ -318,7 +319,12 @@ func (c *core) persistSearchIndexCacheAsync(a *pvf.Archive, gen uint64, metadata
 	override := c.searchIndexCachePath
 	c.mu.RUnlock()
 
+	finishTask, ok := c.archiveTasks.tryBegin()
+	if !ok {
+		return
+	}
 	go func() {
+		defer finishTask()
 		c.mu.RLock()
 		valid := c.archive == a && c.indexGen == gen && c.batchRevision == revision &&
 			c.indexStatus.State == IndexStateReady && !c.indexStatus.Refreshing && !a.Modified()
@@ -373,7 +379,7 @@ func (c *core) persistCurrentSQLiteIndexAsync() {
 	if err == nil {
 		tmpPath := tmp.Name()
 		_ = tmp.Close()
-		if err = copySQLiteIndexFile(index.path, tmpPath); err == nil {
+		if err = backupSQLiteDatabase(context.Background(), index.db, tmpPath); err == nil {
 			_ = os.Remove(target)
 			err = os.Rename(tmpPath, target)
 		}
@@ -382,25 +388,7 @@ func (c *core) persistCurrentSQLiteIndexAsync() {
 		}
 	}
 	if err == nil {
-		index.path = target
 		index.identity = identity
 	}
 	c.mu.Unlock()
-}
-
-func copySQLiteIndexFile(source, target string) error {
-	in, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(target)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
 }

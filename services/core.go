@@ -230,6 +230,7 @@ func (c *core) setArchive(a *pvf.Archive) error {
 		}
 		c.mu.Lock()
 		c.detachVersionLocked()
+		c.invalidateAdvancedSearchLocked()
 		if c.diskIndex != nil {
 			c.diskIndex.close()
 		}
@@ -244,6 +245,7 @@ func (c *core) setArchive(a *pvf.Archive) error {
 	}
 	c.mu.Lock()
 	c.detachVersionLocked()
+	c.invalidateAdvancedSearchLocked()
 	if c.diskIndex != nil {
 		c.diskIndex.close()
 		c.diskIndex = nil
@@ -268,6 +270,7 @@ func (c *core) setArchiveWithDeferredDiskIndex(a *pvf.Archive) (uint64, context.
 	a.ClearMutations()
 	c.mu.Lock()
 	c.detachVersionLocked()
+	c.invalidateAdvancedSearchLocked()
 	if c.fileIndexCancel != nil {
 		c.fileIndexCancel()
 		c.fileIndexCancel = nil
@@ -362,7 +365,7 @@ func (c *core) installDiskArchiveIndexesLocked(a *pvf.Archive) {
 	}
 	c.indexRefreshPending = false
 	c.indexRefreshPendingForce = false
-	c.invalidateAdvancedSearchLocked()
+	c.markAdvancedSearchStaleLocked(a)
 	c.indexGen++
 	c.archiveGeneration++
 	c.batchRevision++
@@ -406,6 +409,9 @@ func (c *core) recordOpenDuration(duration time.Duration) {
 // replaceArchiveLocked installs a newly materialized archive while retaining
 // the current version repository session. The caller must hold c.mu.
 func (c *core) replaceArchiveLocked(a *pvf.Archive) error {
+	if c.diskIndex != nil && c.diskIndex.entries != nil {
+		return c.rebuildArchiveIndexesLocked(a)
+	}
 	oldArchive := c.archive
 	revision := c.batchRevision
 	c.batchRevision++
@@ -439,7 +445,7 @@ func (c *core) replaceArchivePayloadLocked(a *pvf.Archive, changedIndexes map[in
 	}
 	c.indexRefreshPending = false
 	c.indexRefreshPendingForce = false
-	c.invalidateAdvancedSearchLocked()
+	c.markAdvancedSearchStaleLocked(a)
 	preserveSearch := c.indexStatus.State == IndexStateReady && c.searchRecords != nil
 	c.indexGen++
 	c.batchRevision++
@@ -488,8 +494,21 @@ func (c *core) replaceArchivePayloadLocked(a *pvf.Archive, changedIndexes map[in
 }
 
 // rebuildArchiveIndexesLocked refreshes every derived view after the archive's
-// file table changes. The caller must hold c.mu and must pass c.archive.
+// file table changes. The caller must hold c.mu. SQLite also accepts a detached
+// staged archive and installs it only after the projection transaction commits.
 func (c *core) rebuildArchiveIndexesLocked(a *pvf.Archive) error {
+	if c.diskIndex != nil && c.diskIndex.entries != nil {
+		if err := c.diskIndex.applyArchiveDelta(a); err != nil {
+			// A live structural mutation cannot serve the old projection after
+			// rollback. Staged mutations leave the previous archive usable.
+			if a == c.archive {
+				c.failSQLiteProjectionLocked(err)
+			}
+			return err
+		}
+		c.installDiskArchiveIndexesLocked(a)
+		return nil
+	}
 	for {
 		if c.archive != a {
 			return ErrNoArchive
@@ -601,7 +620,7 @@ func (c *core) installArchiveIndexesLockedWithSearch(a *pvf.Archive, children ma
 	}
 	c.indexRefreshPending = false
 	c.indexRefreshPendingForce = false
-	c.invalidateAdvancedSearchLocked()
+	c.markAdvancedSearchStaleLocked(a)
 	c.indexGen++
 	c.archiveGeneration++
 	c.batchRevision++

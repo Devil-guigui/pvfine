@@ -446,6 +446,7 @@ func minInt32(a, b int32) int32 {
 // adoptRebuilt refreshes in-memory state so the archive keeps working after a
 // save: sections move, chunks re-derive from the new layout.
 func (a *Archive) adoptRebuilt(out []byte) {
+	a.contentDigest = ""
 	a.data = out
 	pos := headerSize
 	a.tableOff = pos

@@ -132,7 +132,11 @@ func (s *ArchiveService) searchAdvancedQuick(query, scope string, exact bool, cu
 }
 
 func (s *ArchiveService) searchAdvancedString(query, scope string, regex bool, cursor, limit int) (*AdvancedSearchResult, error) {
-	return s.searchAdvancedStringSQLite(query, scope, regex, cursor, limit)
+	result, err := s.searchAdvancedStringSQLite(query, scope, regex, cursor, limit)
+	if cursor == 0 && errors.Is(err, errAdvancedPoolChanged) {
+		return s.searchAdvancedStringSQLite(query, scope, regex, cursor, limit)
+	}
+	return result, err
 }
 
 func (s *ArchiveService) searchAdvancedBinary(query, scope string, cursor, limit int) (*AdvancedSearchResult, error) {
@@ -384,6 +388,42 @@ func (c *core) invalidateAdvancedSearchLocked() {
 	if disk := c.detachAdvancedSearchLocked(); disk != nil {
 		go disk.close()
 	}
+}
+
+// markAdvancedSearchStaleLocked cancels result generation but retains a ready
+// immutable reference base. Only explicit cancel/close or an unfinished build
+// destroys the session. Caller holds core.mu.
+func (c *core) markAdvancedSearchStaleLocked(a *pvf.Archive) {
+	if c.diskIndex != nil && a != nil {
+		summary := a.MutationsSince(0)
+		if len(summary.Files) > 0 {
+			c.diskIndex.queueSemanticMutations(summary)
+		}
+	}
+	d := c.advancedDisk
+	if d == nil {
+		return
+	}
+	if !d.published.Load() {
+		c.invalidateAdvancedSearchLocked()
+		return
+	}
+	d.epoch++
+	if d.activeCancel != nil {
+		d.activeCancel()
+	}
+	if d.pendingIDs == nil {
+		d.pendingIDs = make(map[uint64]struct{})
+	}
+	if a != nil {
+		for _, mutation := range a.MutationsSince(0).Files {
+			if mutation.Identity != 0 {
+				d.pendingIDs[mutation.Identity] = struct{}{}
+			}
+		}
+	}
+	c.advancedStatus = AdvancedSearchIndexStatus{State: AdvancedIndexStateIdle, Stage: "stale"}
+	c.binaryCache = make(map[binarySearchKey][]advancedFileMatch)
 }
 
 // detachAdvancedSearchLocked cancels and detaches the current disk session.

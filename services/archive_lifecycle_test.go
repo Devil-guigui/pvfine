@@ -7,6 +7,29 @@ import (
 	"pvfine/internal/pvf"
 )
 
+func TestArchiveTaskFollowUpDoesNotBlockClose(t *testing.T) {
+	gate := newArchiveTaskGate()
+	finish, ok := gate.tryBegin()
+	if !ok {
+		t.Fatal("open gate rejected follow-up")
+	}
+	waitFor := gate.beginClose()
+	if len(waitFor) != 1 {
+		t.Fatalf("close tracks %d tasks, want 1", len(waitFor))
+	}
+	if _, ok := gate.tryBegin(); ok {
+		t.Fatal("closing gate accepted follow-up")
+	}
+	finish()
+	<-waitFor[0]
+	gate.endClose()
+	finish, ok = gate.tryBegin()
+	if !ok {
+		t.Fatal("reopened gate rejected follow-up")
+	}
+	finish()
+}
+
 func TestCloseArchiveWaitsForArchiveTasks(t *testing.T) {
 	c := NewCore()
 	a := pvf.New()

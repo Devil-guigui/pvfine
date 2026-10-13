@@ -45,6 +45,16 @@ var stringTableFiles = []string{
 	"n_string_kor.lst",
 }
 
+func IsStringTableMappingPath(path string) bool {
+	path = normalizePath(path)
+	for _, candidate := range stringTableFiles {
+		if strings.EqualFold(path, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
 type stringTableState struct {
 	once         sync.Once
 	paths        map[int][]string                  // table index -> candidate .str paths (highest precedence first)
@@ -168,6 +178,31 @@ func (a *Archive) stringTablePaths(index int) []string {
 // resolution.
 func (a *Archive) StringTablePaths(index int) []string {
 	return a.stringTablePaths(index)
+}
+
+// StringTableDependencyPaths includes missing localization candidates, so an
+// index can refresh previously unresolved placeholders when a file appears.
+func (a *Archive) StringTableDependencyPaths(index int) []string {
+	var result []string
+	seen := make(map[string]struct{})
+	for _, path := range a.stringTablePaths(index) {
+		candidates := []string{path}
+		base := path
+		if pos := strings.LastIndexByte(base, '.'); pos > 0 {
+			base = base[:pos]
+		}
+		for _, suffix := range []string{".translate.str", ".kor.str", ".uv.str", ".str"} {
+			candidates = append(candidates, base+suffix)
+		}
+		for _, candidate := range candidates {
+			key := strings.ToLower(candidate)
+			if _, exists := seen[key]; !exists {
+				seen[key] = struct{}{}
+				result = append(result, candidate)
+			}
+		}
+	}
+	return result
 }
 
 // loadStringTable parses one `.str` payload (UTF-16LE, `key>value` lines,

@@ -226,6 +226,7 @@ func (s *ArchiveService) RegisterFileToList(fileIndex int32, listPath, id string
 		return nil, err
 	}
 	mutationSummary := a.MutationsSince(mutationCheckpoint)
+	s.c.markAdvancedSearchStaleLocked(a)
 	a.ClearMutations()
 	refreshRegistrationEditorTextLocked(s.c, a, listIndex, hashIndex)
 	invalidateRegistrationIndexesLocked(s.c)
@@ -241,7 +242,9 @@ func (s *ArchiveService) RegisterFileToList(fileIndex int32, listPath, id string
 	}
 	s.c.mu.Unlock()
 
-	s.c.scheduleArchiveMutations(a, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(a, mutationSummary); err != nil {
+		return nil, err
+	}
 	emitEvent("archive:registrations-changed", map[string]any{
 		"fileIndexes": changedRegistrationIndexes(listIndex, hashIndex, fileIndex),
 	})
@@ -389,6 +392,7 @@ func (s *ArchiveService) RegisterMissingIndexHashes(listPath string, rawIDs []st
 		s.c.mu.Unlock()
 		return nil, err
 	}
+	s.c.markAdvancedSearchStaleLocked(a)
 	a.ClearMutations()
 	refreshRegistrationEditorTextLocked(s.c, a, -1, hashIndex)
 	invalidateRegistrationIndexesLocked(s.c)
@@ -505,5 +509,5 @@ func invalidateRegistrationIndexesLocked(c *core) {
 	c.invalidateScriptLocked()
 	c.annotationRelations = make(map[string]map[string]*relationTarget)
 	c.editorAnnotation = editorAnnotationCache{}
-	c.invalidateAdvancedSearchLocked()
+	c.markAdvancedSearchStaleLocked(c.archive)
 }

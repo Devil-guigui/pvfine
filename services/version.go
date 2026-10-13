@@ -902,7 +902,9 @@ func (s *VersionService) Undo() (*VersionStatus, error) {
 	status := s.c.versionStatusLocked()
 	info := s.c.archive.Info()
 	s.c.mu.Unlock()
-	s.c.scheduleArchiveMutations(a, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(a, mutationSummary); err != nil {
+		return nil, err
+	}
 	emitEvent("archive:reloaded", info)
 	s.emitVersionChanged("undo")
 	return &status, nil
@@ -930,7 +932,9 @@ func (s *VersionService) Discard() (*VersionStatus, error) {
 	status := s.c.versionStatusLocked()
 	info := s.c.archive.Info()
 	s.c.mu.Unlock()
-	s.c.scheduleArchiveMutations(a, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(a, mutationSummary); err != nil {
+		return nil, err
+	}
 	emitEvent("archive:reloaded", info)
 	s.emitVersionChanged("discarded")
 	return &status, nil
@@ -968,7 +972,9 @@ func (s *VersionService) Checkout(commitID string) (*VersionStatus, error) {
 	status := s.c.versionStatusLocked()
 	info := s.c.archive.Info()
 	s.c.mu.Unlock()
-	s.c.scheduleArchiveMutations(a, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(a, mutationSummary); err != nil {
+		return nil, err
+	}
 	emitEvent("archive:reloaded", info)
 	s.emitVersionChanged("checkout")
 	emitEvent("version:checked-out", status)
@@ -1193,7 +1199,9 @@ func (s *VersionService) RestorePath(path string) (*VersionStatus, error) {
 	status := s.c.versionStatusLocked()
 	info := s.c.archive.Info()
 	s.c.mu.Unlock()
-	s.c.scheduleArchiveMutations(a, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(a, mutationSummary); err != nil {
+		return nil, err
+	}
 	emitEvent("archive:reloaded", info)
 	s.emitVersionChanged("restored")
 	return &status, nil
@@ -1712,7 +1720,7 @@ func applyContentPathsLocked(c *core, paths []string, desired pvfversion.Content
 	c.editorText = make(map[int32]string)
 	c.editorAnnotation = editorAnnotationCache{}
 	c.annotationRelations = make(map[string]map[string]*relationTarget)
-	c.invalidateAdvancedSearchLocked()
+	c.markAdvancedSearchStaleLocked(c.archive)
 	return nil
 }
 

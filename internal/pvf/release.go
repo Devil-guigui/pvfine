@@ -23,6 +23,7 @@ func (a *Archive) Release() int64 {
 	}
 	a.tw = nil
 	a.data = nil
+	a.contentDigest = ""
 	a.pageKeys = nil
 	a.items = nil
 	a.groups = nil

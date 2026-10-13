@@ -256,6 +256,9 @@ func (s *EditorService) Save() (ArchiveInfo, error) {
 		s.c.mu.Unlock()
 		return ArchiveInfo{}, err
 	}
+	s.c.markAdvancedSearchStaleLocked(a)
+	saveMutations := a.MutationsSince(0)
+	a.ClearMutations()
 	if err := s.c.markVersionArtifactSavedLocked(a.SourcePath()); err != nil {
 		s.c.mu.Unlock()
 		return ArchiveInfo{}, err
@@ -263,6 +266,9 @@ func (s *EditorService) Save() (ArchiveInfo, error) {
 	info := a.Info()
 	sourcePath := a.SourcePath()
 	s.c.mu.Unlock()
+	if err := s.c.scheduleArchiveMutations(a, saveMutations); err != nil {
+		return ArchiveInfo{}, err
+	}
 	s.c.persistCurrentSQLiteIndexAsync()
 	s.c.persistCurrentSearchIndexCacheAsync()
 	if s.c.autosave != nil {
@@ -371,8 +377,14 @@ func (s *EditorService) SaveAsDialog() (string, error) {
 		s.c.mu.Unlock()
 		return "", err
 	}
+	s.c.markAdvancedSearchStaleLocked(a)
+	saveMutations := a.MutationsSince(0)
+	a.ClearMutations()
 	info := a.Info()
 	s.c.mu.Unlock()
+	if err := s.c.scheduleArchiveMutations(a, saveMutations); err != nil {
+		return "", err
+	}
 	s.c.persistCurrentSQLiteIndexAsync()
 	s.c.persistCurrentSearchIndexCacheAsync()
 	if s.c.autosave != nil {

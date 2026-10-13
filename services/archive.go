@@ -144,12 +144,18 @@ func (s *ArchiveService) IndexStatus() IndexStatus {
 // snapshot remains available to Search while the replacement is prepared.
 func (s *ArchiveService) RebuildSearchIndex() (IndexStatus, error) {
 	developmentLog("[pvfine:index] forced rebuild requested")
-	s.c.mu.RLock()
+	s.c.mu.Lock()
 	if s.c.archive == nil {
-		s.c.mu.RUnlock()
+		s.c.mu.Unlock()
 		return IndexStatus{}, ErrNoArchive
 	}
-	s.c.mu.RUnlock()
+	if s.c.diskIndex != nil && s.c.diskIndex.entries == nil {
+		if err := s.c.rebuildArchiveIndexesLocked(s.c.archive); err != nil {
+			s.c.mu.Unlock()
+			return IndexStatus{}, err
+		}
+	}
+	s.c.mu.Unlock()
 	s.c.startSearchIndexForced()
 	return s.IndexStatus(), nil
 }
@@ -479,6 +485,10 @@ func (s *ArchiveService) CreateFile(path string, dataType int32) (*TreeNode, err
 	if s.c.versionRepo != nil {
 		before = make(pvfversion.ContentSnapshot)
 	}
+	if s.c.diskIndex != nil && s.c.diskIndex.entries != nil {
+		a = a.CloneForBatch()
+		mutationCheckpoint = a.MutationCheckpoint()
+	}
 	index := a.AddFile(path, []byte{}, dataType)
 	if err := s.c.rebuildArchiveIndexesLocked(a); err != nil {
 		s.c.mu.Unlock()
@@ -512,7 +522,9 @@ func (s *ArchiveService) CreateFile(path string, dataType int32) (*TreeNode, err
 	versioned := s.c.versionRepo != nil
 	s.c.mu.Unlock()
 
-	s.c.scheduleArchiveMutations(a, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(a, mutationSummary); err != nil {
+		return nil, err
+	}
 	emitEvent("archive:changed", info)
 	if versioned {
 		emitVersionState(s.c, "file-created")
@@ -550,6 +562,9 @@ func (s *ArchiveService) deleteFiles(fileIndexes []int32, syncRegistrations bool
 	if err := validateFileIndexes(a, fileIndexes); err != nil {
 		s.c.mu.Unlock()
 		return nil, err
+	}
+	if s.c.diskIndex != nil && s.c.diskIndex.entries != nil {
+		a = a.CloneForBatch()
 	}
 	mutationCheckpoint := a.MutationCheckpoint()
 	mutationPaths := make([]string, 0, len(fileIndexes))
@@ -617,7 +632,9 @@ func (s *ArchiveService) deleteFiles(fileIndexes []int32, syncRegistrations bool
 	versioned := s.c.versionRepo != nil
 	s.c.mu.Unlock()
 
-	s.c.scheduleArchiveMutations(a, mutationSummary)
+	if err := s.c.scheduleArchiveMutations(a, mutationSummary); err != nil {
+		return nil, err
+	}
 	emitEvent("archive:changed", info)
 	if versioned {
 		emitVersionState(s.c, "files-deleted")
@@ -849,15 +866,33 @@ func (s *ArchiveService) searchScopedRecords(query string, cursor int, limit int
 		return nil, ErrNoArchive
 	}
 	if s.c.diskIndex != nil {
-		if s.c.indexStatus.State == IndexStateBuilding {
+		if s.c.indexStatus.State == IndexStateBuilding && (registeredOnly || itemsOnly || exact) {
 			return nil, ErrSearchIndexing
 		}
 		if s.c.indexStatus.State == IndexStateError {
 			return nil, errors.New(s.c.indexStatus.Error)
 		}
+		// Bind pagination to both the semantic generation and the query source
+		// (path fallback versus complete semantic records).
+		epoch := s.c.indexGen * 2
+		if s.c.diskIndex.dirty {
+			epoch++
+		}
+		if epoch >= 1<<21 {
+			return nil, errors.New("搜索会话编号已耗尽，请重新打开归档")
+		}
+		if cursor > 0 {
+			if uint64(cursor)>>32 != epoch {
+				return nil, errors.New("搜索游标已失效，请重新搜索")
+			}
+			cursor = int(uint64(cursor) & ((1 << 32) - 1))
+		}
 		result, err := s.c.diskIndex.searchScopedRecords(query, cursor, limit, exact, itemsOnly, excludeID, scope, registeredOnly)
 		if err != nil {
 			return nil, err
+		}
+		if result.NextCursor >= 0 {
+			result.NextCursor = int(epoch<<32 | uint64(result.NextCursor))
 		}
 		for _, hit := range result.Hits {
 			hit.ChangeKind = archiveChangeKind(s.c.archive, hit.FileIndex)

@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"pvfine/internal/pvf"
 )
 
 func advancedIndexFiles(shards int) []string {
@@ -28,7 +30,13 @@ func (d *advancedSQLite) publishCache(root string) error {
 	}
 	defer os.RemoveAll(staging)
 	for _, name := range advancedIndexFiles(d.shards) {
-		if err := os.Link(filepath.Join(d.dir, name), filepath.Join(staging, name)); err != nil {
+		var err error
+		if name == "index.db" && d.mutable {
+			err = backupSQLiteDatabase(d.requestContext(), d.db, filepath.Join(staging, name))
+		} else {
+			err = os.Link(filepath.Join(d.dir, name), filepath.Join(staging, name))
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -74,7 +82,7 @@ func (d *advancedSQLite) restoreCache() (valid bool) {
 		return false
 	}
 	var version, shards int
-	if db.QueryRowContext(d.ctx, `SELECT version,shards FROM meta`).Scan(&version, &shards) != nil || version != 3 || shards < 1 || shards > advancedMaxShards || !advancedDBValid(d.ctx, db) {
+	if db.QueryRowContext(d.ctx, `SELECT version,shards FROM meta`).Scan(&version, &shards) != nil || version != 4 || shards < 1 || shards > advancedMaxShards || !advancedDBValid(d.ctx, db) {
 		return false
 	}
 	for shard := 0; shard < shards; shard++ {
@@ -107,9 +115,40 @@ func (d *advancedSQLite) restoreCache() (valid bool) {
 		return false
 	}
 	d.db, d.shards = db, shards
+	_ = db.QueryRowContext(d.ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='file_map')`).Scan(&d.overlay)
 	now := time.Now()
 	_ = os.Chtimes(d.cachePath, now, now)
 	return true
+}
+
+// A saved, fully synchronized overlay can be reused on reopen. The writable
+// main database is snapshotted; unchanged reference shards remain hard linked.
+// Caller holds d.mu, never core.mu while publishing disk data.
+func (d *advancedSQLite) publishCurrentCache(c *core, a *pvf.Archive) {
+	if !d.overlay || d.cachePath != "" {
+		return
+	}
+	c.mu.RLock()
+	if c.archive != a || c.advancedDisk != d || d.epoch != d.indexedEpoch || d.requestContext().Err() != nil {
+		c.mu.RUnlock()
+		return
+	}
+	digest, clean := a.SavedContentHash()
+	c.mu.RUnlock()
+	if !clean {
+		return
+	}
+	root, err := os.UserCacheDir()
+	if err != nil {
+		return
+	}
+	root = filepath.Join(root, "pvfine", "advanced-search")
+	d.cachePath = filepath.Join(root, "refs-v4-"+digest)
+	if err = d.publishCache(root); err != nil && !os.IsExist(err) {
+		d.cachePath = ""
+		return
+	}
+	pruneAdvancedCaches(root)
 }
 
 func advancedIndexDirectorySize(dir string) int64 {
@@ -140,7 +179,7 @@ func pruneAdvancedCaches(root string) {
 	for _, entry := range entries {
 		legacy := (!entry.IsDir() && strings.HasPrefix(entry.Name(), "refs-v1-") && strings.HasSuffix(entry.Name(), ".db")) ||
 			(entry.IsDir() && strings.HasPrefix(entry.Name(), "refs-v2-"))
-		current := entry.IsDir() && strings.HasPrefix(entry.Name(), "refs-v3-")
+		current := entry.IsDir() && (strings.HasPrefix(entry.Name(), "refs-v3-") || strings.HasPrefix(entry.Name(), "refs-v4-"))
 		if !legacy && !current {
 			continue
 		}

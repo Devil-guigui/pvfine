@@ -598,7 +598,9 @@ func TestAdvancedSQLiteSavedCacheAndCorruption(t *testing.T) {
 	if err := NewEditorService(c).SetText(0, "[name]\n`unsaved value`"); err != nil {
 		t.Fatal(err)
 	}
-	<-d.closed
+	if c.advancedDisk != d {
+		t.Fatal("editing discarded the ready reference base")
+	}
 	if _, err := svc.AdvancedSearch("string", "unsaved value", "", false, 0, 1); err != nil {
 		t.Fatal(err)
 	}

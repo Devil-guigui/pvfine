@@ -68,8 +68,12 @@ func (s *AnnotationService) ReloadRules() (AnnotationReloadResult, error) {
 		s.c.pathAnnotations = buildPathAnnotations(engine, s.c.dirChildren)
 	}
 	newSpecsFingerprint := searchIndexSpecFingerprint(s.c.searchableListSpecsLocked())
+	if archiveOpen && oldSpecsFingerprint != newSpecsFingerprint {
+		s.c.markAdvancedSearchStaleLocked(s.c.archive)
+	}
 	if archiveOpen && oldSpecsFingerprint != newSpecsFingerprint && s.c.diskIndex != nil {
 		s.c.diskIndex.dirty = true
+		s.c.diskIndex.semanticEpoch++
 	}
 	s.c.mu.Unlock()
 	if archiveOpen && oldSpecsFingerprint != newSpecsFingerprint {

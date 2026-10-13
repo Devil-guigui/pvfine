@@ -190,8 +190,12 @@ func (s *RuleService) activate(category string, snap *ruleconfig.Snapshot) error
 			c.pathAnnotations = buildPathAnnotations(c.annotationEngine, c.dirChildren)
 		}
 		specChanged = old != searchIndexSpecFingerprint(c.searchableListSpecsLocked())
+		if archiveOpen && specChanged {
+			c.markAdvancedSearchStaleLocked(c.archive)
+		}
 		if archiveOpen && specChanged && c.diskIndex != nil {
 			c.diskIndex.dirty = true
+			c.diskIndex.semanticEpoch++
 		}
 	}
 	if renderer != nil {
