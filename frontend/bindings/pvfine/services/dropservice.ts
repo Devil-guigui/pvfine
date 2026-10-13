@@ -25,7 +25,7 @@ export function Apply(request: $models.DropRateApplyRequest): $CancellablePromis
 }
 
 /**
- * Read returns the current drop-rate snapshot for the opened 90US/90CN PVF.
+ * Read returns the current drop-rate snapshot for the opened 90US/90CN/TW PVF.
  */
 export function Read(): $CancellablePromise<$models.DropRateDocument | null> {
     return $Call.ByID(1517419244);

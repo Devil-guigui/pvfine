@@ -11,15 +11,16 @@ import (
 )
 
 const (
-	dropRateSectionName = "basis of rarity dicision"
-	dropRateGroupSize   = 7
-	dropRateValueCount  = 5
-	dropRateTotal       = 10000 // 百分比的百分之一: 100.00% == 10000
-	dropRateRawPerUnit  = 100   // PVF 原始刻度: 0.01% == 100
+	dropRateSectionName     = "basis of rarity dicision"
+	dropRateGroupSize       = 7
+	dropRateLegacyGroupSize = 6
+	dropRateValueCount      = 5
+	dropRateTotal           = 10000 // 百分比的百分之一: 100.00% == 10000
+	dropRateRawPerUnit      = 100   // PVF 原始刻度: 0.01% == 100
 )
 
 var (
-	ErrDropRateUnsupported = errors.New("基础掉率编辑器仅支持 90US/90CN PVF")
+	ErrDropRateUnsupported = errors.New("基础掉率编辑器仅支持 90US/90CN/TW PVF")
 	ErrDropRateStale       = errors.New("掉率数据已过期,请重新加载")
 )
 
@@ -76,7 +77,7 @@ type DropService struct{ c *core }
 
 func NewDropService(c *core) *DropService { return &DropService{c: c} }
 
-// Read returns the current drop-rate snapshot for the opened 90US/90CN PVF.
+// Read returns the current drop-rate snapshot for the opened 90US/90CN/TW PVF.
 func (s *DropService) Read() (*DropRateDocument, error) {
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()
@@ -214,7 +215,7 @@ type dropRateReplacement struct {
 }
 
 func supportedDropRateVersion(version string) bool {
-	return version == "90US" || version == "90CN"
+	return version == "90US" || version == "90CN" || version == "TW"
 }
 
 func readDropRateDocument(a *pvf.Archive) (*DropRateDocument, error) {
@@ -253,15 +254,15 @@ func readDropRateSection(a *pvf.Archive, spec dropRateFileSpec) (*DropRateSectio
 	if err != nil {
 		return nil, err
 	}
-	expected := spec.offset + spec.groupCount*dropRateGroupSize
-	if len(values) != expected {
-		return nil, fmt.Errorf("掉率文件 %s 的 section 数据长度为 %d,需要 %d", spec.path, len(values), expected)
+	groupSize, err := dropRateGroupWidth(values, spec)
+	if err != nil {
+		return nil, err
 	}
 
 	groups := make([]*DropRateGroup, 0, spec.groupCount)
 	for groupIndex := 0; groupIndex < spec.groupCount; groupIndex++ {
-		start := spec.offset + groupIndex*dropRateGroupSize
-		rates, err := decodeDropRateGroup(values[start : start+dropRateGroupSize])
+		start := spec.offset + groupIndex*groupSize
+		rates, err := decodeDropRateGroup(values[start : start+groupSize])
 		if err != nil {
 			return nil, fmt.Errorf("掉率文件 %s 第 %d 组无效: %w", spec.path, groupIndex+1, err)
 		}
@@ -318,9 +319,9 @@ func prepareDropRateReplacements(a *pvf.Archive, sections []*DropRateSection) ([
 		if err != nil {
 			return nil, err
 		}
-		expected := spec.offset + spec.groupCount*dropRateGroupSize
-		if len(values) != expected {
-			return nil, fmt.Errorf("掉率文件 %s 的 section 数据长度为 %d,需要 %d", spec.path, len(values), expected)
+		groupSize, err := dropRateGroupWidth(values, spec)
+		if err != nil {
+			return nil, err
 		}
 
 		for groupIndex, group := range sectionInput.Groups {
@@ -330,8 +331,8 @@ func prepareDropRateReplacements(a *pvf.Archive, sections []*DropRateSection) ([
 			if err := validateDropRates(group.Rates); err != nil {
 				return nil, fmt.Errorf("掉率 section %s 第 %d 组无效: %w", spec.key, groupIndex+1, err)
 			}
-			start := spec.offset + groupIndex*dropRateGroupSize
-			currentRates, err := decodeDropRateGroup(values[start : start+dropRateGroupSize])
+			start := spec.offset + groupIndex*groupSize
+			currentRates, err := decodeDropRateGroup(values[start : start+groupSize])
 			if err != nil {
 				return nil, fmt.Errorf("掉率文件 %s 第 %d 组无效: %w", spec.path, groupIndex+1, err)
 			}
@@ -451,4 +452,15 @@ func validateDropRates(rates []int) error {
 		return fmt.Errorf("概率总和为 %.2f%%,必须为 100.00%%", float64(sum)/100)
 	}
 	return nil
+}
+
+// TW uses six values per group; 90-series files carry an additional value.
+// Validate each section's exact layout before interpreting or changing it.
+func dropRateGroupWidth(values []int64, spec dropRateFileSpec) (int, error) {
+	for _, width := range []int{dropRateLegacyGroupSize, dropRateGroupSize} {
+		if len(values) == spec.offset+spec.groupCount*width {
+			return width, nil
+		}
+	}
+	return 0, fmt.Errorf("掉率文件 %s 的 section 数据长度为 %d,需要 %d 或 %d", spec.path, len(values), spec.offset+spec.groupCount*dropRateLegacyGroupSize, spec.offset+spec.groupCount*dropRateGroupSize)
 }

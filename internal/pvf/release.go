@@ -12,12 +12,16 @@ func (a *Archive) Release() int64 {
 	a.cacheMu.Lock()
 	released := int64(len(a.data) + len(a.pageKeys) + len(a.items)*24 + len(a.groups)*8)
 	released += int64(len(a.strA) + len(a.strW))
+	if a.tw != nil {
+		released += int64(len(a.tw.entries)*48 + len(a.tw.strings)*4 + len(a.tw.stringTable) + len(a.tw.directory))
+	}
 	for _, value := range a.chunkCache {
 		released += int64(len(value))
 	}
 	for _, value := range a.overlay {
 		released += int64(len(value))
 	}
+	a.tw = nil
 	a.data = nil
 	a.pageKeys = nil
 	a.items = nil

@@ -79,6 +79,7 @@ type Archive struct {
 	// pageKeys retains the per-page state needed to write the container back.
 	format   formatProfile
 	pageKeys []byte
+	tw       *twArchive // immutable TW transport and index metadata
 
 	sourcePath string // file the archive was opened from
 
@@ -239,6 +240,9 @@ func Parse(data []byte) (*Archive, error) {
 }
 
 func parse(data []byte, sidecarDir string) (*Archive, error) {
+	if isTW(data) {
+		return parseTW(data)
+	}
 	detected, err := detectArchive(data, sidecarDir)
 	if err != nil {
 		return nil, err

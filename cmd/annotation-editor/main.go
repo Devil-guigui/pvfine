@@ -234,7 +234,7 @@ func (s *editorServer) handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if request.PVFVersion != "" && !annotationrules.ValidPVFVersion(request.PVFVersion) {
-		writeAPIError(w, http.StatusBadRequest, "pvfVersion 只允许 90US、90CN、110US、115US、100CN 或空值")
+		writeAPIError(w, http.StatusBadRequest, "pvfVersion 只允许 90US、90CN、110US、115US、100CN、TW 或空值")
 		return
 	}
 

@@ -31,6 +31,7 @@ const (
 	FormatPaged115   = "paged115"
 	FormatRecovered  = "recovered"
 	FormatPaged100CN = "paged100cn"
+	FormatTW         = "tw"
 )
 
 var standardProfile = formatProfile{id: FormatStandard}
@@ -60,6 +61,8 @@ var paged100CNProfile = formatProfile{
 	container: pagedContainer,
 	rules:     ContentRules{RequiresIndexHash: true, SupportsStringReferences: true},
 }
+
+var twProfile = formatProfile{id: FormatTW, rules: ContentRules{SupportsStringReferences: true}}
 
 // WriteCapabilities is derived from both the format and recovered archive
 // state. Structural edits include appending or remapping string-pool entries.
@@ -125,6 +128,8 @@ func (a *Archive) ClientVersion() string {
 		return "115US"
 	case FormatPaged100CN:
 		return "100CN"
+	case FormatTW:
+		return "TW"
 	default:
 		return ""
 	}

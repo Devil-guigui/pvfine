@@ -1,8 +1,11 @@
 package services
 
 import (
+	"bytes"
 	"errors"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	"pvfine/internal/pvf"
@@ -173,7 +176,7 @@ func TestValidateDropRates(t *testing.T) {
 }
 
 func TestSupportedDropRateVersion(t *testing.T) {
-	for _, version := range []string{"90US", "90CN"} {
+	for _, version := range []string{"90US", "90CN", "TW"} {
 		if !supportedDropRateVersion(version) {
 			t.Fatalf("version %s should be supported", version)
 		}
@@ -250,4 +253,133 @@ func snapshotDropFile(t *testing.T, a *pvf.Archive, path string) []byte {
 		t.Fatal(err)
 	}
 	return append([]byte(nil), raw...)
+}
+
+func TestDropRateServiceSixValueGroupsKeepExtraFields(t *testing.T) {
+	a := makeDropRateArchive(t)
+	for _, spec := range dropRateFileSpecs {
+		index, _ := a.Find(spec.path)
+		doc, err := a.ParseScriptDocument(snapshotDropFile(t, a, spec.path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		section, _ := doc.Section([]string{dropRateSectionName}, 0)
+		values, err := scriptIntegerValues(section.Values(), spec.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var text strings.Builder
+		text.WriteString("[" + dropRateSectionName + "]\n")
+		for i, value := range values {
+			if i >= spec.offset && (i-spec.offset)%7 == 6 {
+				continue
+			}
+			text.WriteString(strconv.FormatInt(value, 10))
+			text.WriteByte(' ')
+		}
+		if err := a.SetText(index, text.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verifyDropRateApplyPreservesFields(t, a)
+}
+
+func verifyDropRateApplyPreservesFields(t *testing.T, a *pvf.Archive) {
+	t.Helper()
+	c := NewCore()
+	if err := c.setArchive(a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.closeArchive)
+	service := NewDropService(c)
+	document, err := service.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := make(map[string][]int64)
+	for i, spec := range dropRateFileSpecs {
+		doc, err := a.ParseScriptDocument(snapshotDropFile(t, a, spec.path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		section, _ := doc.Section([]string{dropRateSectionName}, 0)
+		before[spec.key], err = scriptIntegerValues(section.Values(), spec.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		document.Sections[i].Groups[0].Rates = []int{1000, 2000, 3000, 4000, 0}
+	}
+	result, err := service.Apply(DropRateApplyRequest{Revision: document.Revision, Sections: document.Sections})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.FileIndexes) != 4 {
+		t.Fatalf("changed files = %d", len(result.FileIndexes))
+	}
+	for _, spec := range dropRateFileSpecs {
+		doc, err := a.ParseScriptDocument(snapshotDropFile(t, a, spec.path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		section, _ := doc.Section([]string{dropRateSectionName}, 0)
+		values, err := scriptIntegerValues(section.Values(), spec.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, original := range before[spec.key] {
+			if i >= spec.offset && i < spec.offset+4 {
+				continue
+			}
+			if values[i] != original {
+				t.Fatalf("%s preserved value %d changed", spec.key, i)
+			}
+		}
+	}
+	var out bytes.Buffer
+	if err := a.SaveTo(&out); err != nil {
+		t.Fatal(err)
+	}
+	b, err := pvf.Parse(out.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Release()
+	if b.Format() != a.Format() {
+		t.Fatal("archive format changed")
+	}
+	reopened, err := readDropRateDocument(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, section := range reopened.Sections {
+		want := []int{1000, 2000, 3000, 4000, 0}
+		if !equalDropRates(section.Groups[0].Rates, want) {
+			t.Fatalf("%s rates did not round trip", section.Key)
+		}
+	}
+}
+
+func TestDropRateServiceTWRealRoundTrip(t *testing.T) {
+	path := os.Getenv("PVF_TW_TESTFILE")
+	if path == "" {
+		t.Skip("PVF_TW_TESTFILE not set")
+	}
+	a, err := pvf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ClientVersion() != "TW" {
+		a.Release()
+		t.Fatal("fixture is not TW")
+	}
+	verifyDropRateApplyPreservesFields(t, a)
+}
+
+func TestDropRateGroupWidthRejectsInvalidLayout(t *testing.T) {
+	spec := dropRateFileSpecs[0]
+	for _, n := range []int{0, 12, 14, 16} {
+		if _, err := dropRateGroupWidth(make([]int64, n), spec); err == nil {
+			t.Fatalf("accepted %d values", n)
+		}
+	}
 }

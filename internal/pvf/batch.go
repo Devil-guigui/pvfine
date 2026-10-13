@@ -725,6 +725,7 @@ func (a *Archive) cloneForBatch() *Archive {
 	defer a.cacheMu.Unlock()
 	clone := &Archive{
 		data:                    a.data,
+		tw:                      a.tw,
 		hdr:                     a.hdr,
 		guard:                   a.guard,
 		keys:                    a.keys,

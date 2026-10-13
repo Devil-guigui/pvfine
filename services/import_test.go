@@ -242,3 +242,37 @@ func TestCollectImportFilesRejectsTargetCollision(t *testing.T) {
 		t.Fatalf("collision error = %v", err)
 	}
 }
+
+func TestImportNutSourceKeepsSourceText(t *testing.T) {
+	source := "// 繁體註解\r\nfunction test() { return [1, 2]; }\r\n"
+	path := filepath.Join(t.TempDir(), "common.NUT")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := []importFile{{sourcePath: path, targetPath: "sqr/common.NUT"}}
+	if err := readImportFiles(files, ImportModeText); err != nil {
+		t.Fatal(err)
+	}
+	a := pvf.New()
+	if _, err := applyPreparedImport(a, files, ImportModeText); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := a.SaveTo(&out); err != nil {
+		t.Fatal(err)
+	}
+	b, err := pvf.Parse(out.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, ok := b.Find("sqr/common.nut")
+	if !ok {
+		t.Fatal("imported NUT missing")
+	}
+	if b.File(index).DataType != pvf.TypeUnicode {
+		t.Fatal("NUT imported as PVF tokens")
+	}
+	if text, err := b.Text(index); err != nil || text != source {
+		t.Fatalf("NUT source changed: %v", err)
+	}
+}

@@ -153,6 +153,9 @@ func sanitizeName(name string) string {
 // sections. A Paged110 container gets its page guards re-encrypted on the way
 // out, so the result is a file the client accepts.
 func (a *Archive) SaveTo(w io.Writer) error {
+	if a.tw != nil {
+		return a.saveTW(w)
+	}
 	if err := a.validateWrite(); err != nil {
 		return err
 	}

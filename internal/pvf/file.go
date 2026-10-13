@@ -29,6 +29,12 @@ func (a *Archive) RawBytes(i int32) ([]byte, error) {
 		return b, nil
 	}
 	it := &a.items[i]
+	if a.tw != nil {
+		if it.chunk < 0 {
+			return nil, nil
+		}
+		return a.twChunk(it.chunk)
+	}
 	ch, err := a.Chunk(it.chunk)
 	if err != nil {
 		return nil, err

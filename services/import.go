@@ -470,7 +470,8 @@ func readImportFiles(files []importFile, mode string) error {
 }
 
 func importDataType(path string) int32 {
-	if strings.EqualFold(filepath.Ext(path), ".str") {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".str" || ext == ".nut" {
 		return pvf.TypeUnicode
 	}
 	return pvf.TypeScript
