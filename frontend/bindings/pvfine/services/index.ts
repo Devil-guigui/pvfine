@@ -84,6 +84,8 @@ export type {
     FileRegistration,
     FileRegistrationOptions,
     FileSetDocument,
+    ForgeDocument,
+    ForgeSection,
     ImageData,
     ImageIndexStatus,
     ImageReference,

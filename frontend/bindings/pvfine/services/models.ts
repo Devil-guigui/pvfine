@@ -453,6 +453,19 @@ export interface FileSetDocument {
     "activeSetId": string;
 }
 
+export interface ForgeDocument {
+    "rows": UpgradeRow[] | null;
+    "grades": UpgradeRow[] | null;
+    "grades100": UpgradeRow[] | null;
+    "maximum": SkillNumber;
+    "extras": ForgeSection[] | null;
+}
+
+export interface ForgeSection {
+    "name": string;
+    "fields": SkillNumber[] | null;
+}
+
 /**
  * ImageData is always a PNG data URL. The source NPK path is intentionally
  * never exposed to the frontend.

@@ -51,7 +51,7 @@ describe("强化/增幅 GUI", () => {
     const file = { index: 1, path: "ETC\\UPGRADE.ETC", text: "", editable: true };
     expect(getGUIProvider(file)?.id).toBe("upgrade");
     expect(getGUIProvider({ ...file, path: "etc/amplifyupgrade.etc" })?.id).toBe("upgrade");
-    expect(getGUIProvider({ ...file, path: "etc/upgrade_separate.etc" })).toBeNull();
+    expect(getGUIProvider({ ...file, path: "etc/upgrade_separate.etc" })?.id).toBe("forge");
   });
   it("概率换算保留千分之一百分比，覆盖 0% 和 100%", () => {
     const { text, row } = fixture();

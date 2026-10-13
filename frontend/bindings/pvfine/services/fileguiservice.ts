@@ -35,6 +35,10 @@ export function ListSkills(): $CancellablePromise<$models.SkillEntry[] | null> {
     return $Call.ByID(3606807130);
 }
 
+export function ReadForge(fileIndex: number, text: string): $CancellablePromise<$models.ForgeDocument | null> {
+    return $Call.ByID(1666123291, fileIndex, text);
+}
+
 /**
  * ReadItem resolves the same item union used by shop lists and search pickers.
  */

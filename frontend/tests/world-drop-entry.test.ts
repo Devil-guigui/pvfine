@@ -63,6 +63,22 @@ describe("world drop entry & editor store integration", () => {
     expect(store.getGUIModes(store.activePaneId).entries.get(30)?.mode).toBe("gui");
   });
 
+  it("openForge: 工具入口打开锻造 GUI 并保留已有草稿", async () => {
+    api.ResolveFiles.mockResolvedValue([{ fileIndex: 10, path: "etc/upgrade_separate.etc", isDir: false }]);
+    api.GetFile.mockResolvedValue({ index: 10, path: "etc/upgrade_separate.etc", text: "original", editable: true, dataType: 1, size: 10, tags: [], annotations: [], modified: false });
+    const store = useEditorStore();
+    await store.openFile(10);
+    const tab = store.tabs.find(t => t.index === 10)!;
+    tab.text = "forge draft";
+    expect(await store.openForge()).toBe(true);
+    expect(api.ResolveFiles).toHaveBeenCalledWith(["etc/upgrade_separate.etc"]);
+    expect(tab.text).toBe("forge draft");
+    expect(store.getGUIModes(store.activePaneId).entries.get(10)?.mode).toBe("gui");
+    expect(store.tabs).toHaveLength(1);
+    api.ResolveFiles.mockResolvedValue([]);
+    await expect(store.openForge()).rejects.toThrow("未找到锻造文件");
+  });
+
   it("openUpgrade: 缺失文件时清晰报错", async () => {
     api.ResolveFiles.mockResolvedValue([]);
     const store = useEditorStore();

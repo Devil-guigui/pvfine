@@ -768,6 +768,20 @@ export const useEditorStore = defineStore("editor", () => {
     return true;
   }
 
+  async function openForge(requestedPaneId?: EditorPaneId): Promise<boolean> {
+    const targetPaneId = resolvePaneId(requestedPaneId);
+    const path = "etc/upgrade_separate.etc";
+    const nodes = await ArchiveService.ResolveFiles([path]);
+    const target = nodes?.find((node) => node && !node.isDir && node.fileIndex >= 0);
+    if (!target) throw new Error(`归档中未找到锻造文件 ${path}`);
+    await openFile(target.fileIndex, targetPaneId);
+    const tab = tabs.value.find((tab) => tab.index === target.fileIndex);
+    if (!tab) return false;
+    if (tab.loadError) throw new Error(tab.loadError);
+    setGUIMode(target.fileIndex, "gui", targetPaneId);
+    return true;
+  }
+
   /** 把单个标签的本地文本写入后端 overlay,成功后重置脏基线。 */
   async function saveTab(index: number): Promise<boolean> {
     const tab = getFileDraft(index);
@@ -1198,6 +1212,7 @@ export const useEditorStore = defineStore("editor", () => {
     saveTab,
     saveFileTab,
     openUpgrade,
+    openForge,
     saveActiveTab,
     saveAllDirty,
     save,

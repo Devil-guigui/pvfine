@@ -41,6 +41,13 @@ const providers: GUIProvider[] = [
     matches: (file) => ["etc/upgrade.etc", "etc/amplifyupgrade.etc"].includes(normalizePath(file.path)),
     component: defineAsyncComponent(() => import("../components/gui/UpgradeViewer.vue")),
   },
+  {
+    id: "forge",
+    label: "锻造",
+    readOnly: false,
+    matches: (file) => normalizePath(file.path) === "etc/upgrade_separate.etc",
+    component: defineAsyncComponent(() => import("../components/gui/ForgeViewer.vue")),
+  },
 ];
 
 export function getGUIProvider(file: GUIFile): GUIProvider | null {

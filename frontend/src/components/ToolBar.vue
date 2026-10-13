@@ -126,13 +126,14 @@ const toolOptions = computed(() => [
     icon: () => h(NIcon, null, { default: () => h(Code24Regular) }),
   },
   {
-    label: "强化/增幅概率",
+    label: "强化/增幅/锻造",
     key: "upgrade-tools",
     disabled: !archive.open,
     icon: () => h(NIcon, null, { default: () => h(Code24Regular) }),
     children: [
       { label: "强化概率", key: "upgrade", disabled: !archive.open },
       { label: "增幅概率", key: "amplify-upgrade", disabled: !archive.open },
+      { label: "锻造配置", key: "forge", disabled: !archive.open },
     ],
   },
 ]);
@@ -263,6 +264,12 @@ function onCancelUnpack() {
 }
 
 async function onToolSelect(key: string): Promise<void> {
+  if (key === "forge") {
+    if (!archive.open) { message.warning("需先打开 PVF 归档"); return; }
+    try { await editor.openForge(); }
+    catch (err: any) { message.error(`打开锻造配置失败: ${err?.message ?? err}`); }
+    return;
+  }
   if (key === "upgrade" || key === "amplify-upgrade") {
     if (!archive.open) { message.warning("需先打开 PVF 归档"); return; }
     try { await editor.openUpgrade(key === "amplify-upgrade"); }
