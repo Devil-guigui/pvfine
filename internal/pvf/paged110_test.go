@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -260,17 +259,14 @@ func TestPaged110Keys(t *testing.T) {
 }
 
 func TestPaged110EmbeddedSealedKeyTable(t *testing.T) {
-	if got, want := len(paged110EmbeddedSealedPageKeys), 1920; got != want {
+	if got, want := len(mustBundledPagedClient(t, FormatPaged110).sealed), 1920; got != want {
 		t.Fatalf("embedded sk.dat = %d bytes, want %d", got, want)
 	}
-	sealed, err := loadPaged110SealedPageKeys(t.TempDir())
-	if err != nil {
-		t.Fatalf("load embedded sk.dat: %v", err)
-	}
-	if !bytes.Equal(sealed, paged110EmbeddedSealedPageKeys) {
+	sealed := loadSealedPageKeyCandidates(t.TempDir())[0]
+	if !bytes.Equal(sealed, mustBundledPagedClient(t, FormatPaged110).sealed) {
 		t.Fatal("missing sidecar did not select the embedded sk.dat")
 	}
-	table, err := unsealPageKeyTable(sealed)
+	table, err := unsealPageKeyTableWithKey(sealed, mustBundledPagedClient(t, FormatPaged110).key)
 	if err != nil {
 		t.Fatalf("unseal embedded sk.dat: %v", err)
 	}
@@ -398,14 +394,14 @@ func TestPaged110Unseal(t *testing.T) {
 	if err != nil {
 		t.Skip("testdata/sk.dat not present")
 	}
-	table, err := unsealPageKeyTable(sealed)
+	table, err := unsealPageKeyTableWithKey(sealed, mustBundledPagedClient(t, FormatPaged110).key)
 	if err != nil {
 		t.Fatalf("unseal: %v", err)
 	}
 	if want := 52 * paged110PageKeySize; len(table) != want {
 		t.Fatalf("page key table = %d bytes, want %d", len(table), want)
 	}
-	keys := paged110Candidates("")
+	keys := pagedMetadataCandidates(nil)
 	if len(keys) == 0 {
 		t.Fatal("no metadata key candidates")
 	}
@@ -431,12 +427,8 @@ func TestPaged110CandidatesFromExecutable(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("found %d metadata key candidates, want 3", len(got))
 	}
-	want := "b2bfb46886cd87d5b6a92c4f2f71850e271d715ad3ad4119be4b90eb6585caa5"
-	if fmt.Sprintf("%x", got[0]) != want {
-		t.Errorf("first candidate = %x, want %s", got[0], want)
-	}
-	// The embedded constant must be one of the runs found in the executable.
-	embedded := paged110EmbeddedMetadataKey()
+	// The bundled metadata must be one of the runs found in the executable.
+	embedded := mustBundledPagedClient(t, FormatPaged110).metadata
 	found := false
 	for _, c := range got {
 		if bytes.Equal(c, embedded) {

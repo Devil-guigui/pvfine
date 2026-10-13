@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 )
 
 // The paged container layout is shared by 110US, 115US and unknown clients:
@@ -57,11 +56,12 @@ const (
 	// client data.
 	sealedPageKeyName = "sk.dat"
 	executableName    = "DFO.exe"
+	cnExecutableName  = "DNF.exe"
 )
 
 // ErrPagedKeys indicates a paged archive whose page-key material is
 // missing or does not unlock it.
-var ErrPagedKeys = errors.New("pvf: paged page key table could not be unlocked")
+var ErrPagedKeys = errors.New("pvf: 内置与同目录配套数据均无法解封归档；请将该 PVF 对应版本的 sk.dat 和 DNF.exe（或 DFO.exe）与 PVF 放在同一目录后重试")
 
 // ErrPagedReadOnly reports that a paged container cannot be written back
 // because its page keys are not in memory, so the decrypted page guards could
@@ -107,49 +107,6 @@ func paged110Keys() keySet {
 		maskA:  paged110MaskStrA,
 		maskW:  paged110MaskStrW,
 	}
-}
-
-// paged110RSADER is the RSA-1024 private key embedded in the 110US client
-// executable (PKCS#1 DER). It unwraps the sealed page key table in sk.dat.
-const paged110RSADER = "3082025d02010002818100b3120bba28e9db7a87bf61ea60fdd28141b06759259899c0d22369b497cca064fbfd2747f4" +
-	"a46734774cc04c7f8b4f95db428aba88ce37222bca7244918c0971697d2a3d457143b9629fc3d510c95824e3c0ffe87f" +
-	"aea0b7f5034a617ed3948442ee7df6c07595b137f448cfbec3f024630c76dbd56fcd9a3f7017184dc8394f0203010001" +
-	"028181009acdeef570893b04227680df6e19fff15e28722fcf20ad4ad45f68f286888fe0bd378ccdd7e0889802ca8733" +
-	"9acf846db8af3ddf2485a18418f75af18c21d3c69409bc169c4ad6c7240e451ee29e96e83a4797d29c96503f2bad80df" +
-	"fcbe962d736b8aaf3a1a0c4ec013ef1354d2dab317deb13a65a19415fe9a22f91f7cf701024100ea47490bb1f9402393" +
-	"a621b0c1389eac7d2b152a54c4acf2209532d688ce76d1de36c0ee6770f9d6eda2487a89706fec895f768518df42c8fa" +
-	"ca5bf971b33589024100c3ac5f46b88cd24538cabe7ea551db33a453c1b475c5ac895624df29ce560081d6e79b5dc7a9" +
-	"45214d20b30400982f25c3c31530f79388e74e6820ae802a9a17024100b8b60182860ca5a4272a49cfc957f1cabf5933" +
-	"73cfa7cd4f8d9ef4992efdd1b2c007dd6f5a013a0a5a0ba42770ab44a372dfe05b29f404fcdeb6a3737550bd3902406b" +
-	"f0523e78df75bea9ad6d97ff2a40792454efadd4a9ce9b93e1931944b13c66635e2fde739d747d0246df797dba7587a7" +
-	"8d9dcafd476d65eb629564ad5ed2d102405a8e7445a4d6d4c9b36163bde05d73bda013d3b63a0d5c502e0cefb5ec478d" +
-	"3f2114a15e796b91f0502a728a6b23473b45a2c04814ee22613ed018f8fc600d7a"
-
-var (
-	paged110KeyOnce sync.Once
-	paged110Key     *rsa.PrivateKey
-	paged110KeyErr  error
-)
-
-func paged110PrivateKey() (*rsa.PrivateKey, error) {
-	paged110KeyOnce.Do(func() {
-		der, err := hex.DecodeString(paged110RSADER)
-		if err != nil {
-			paged110KeyErr = err
-			return
-		}
-		paged110Key, paged110KeyErr = x509.ParsePKCS1PrivateKey(der)
-	})
-	return paged110Key, paged110KeyErr
-}
-
-// unsealPageKeyTable RSA-decrypts every 128-byte block of the sealed key file.
-func unsealPageKeyTable(sealed []byte) ([]byte, error) {
-	key, err := paged110PrivateKey()
-	if err != nil {
-		return nil, err
-	}
-	return unsealPageKeyTableWithKey(sealed, key)
 }
 
 func unsealPageKeyTableWithKey(sealed []byte, key *rsa.PrivateKey) ([]byte, error) {
@@ -304,8 +261,7 @@ func writePageGuarded(w io.Writer, logical, pageKeys []byte) error {
 // metadataKeyCandidates returns the AES keys that may wrap the page key table.
 //
 // The client takes every run of 64 hex characters found in the executable and
-// decodes it to 32 bytes. The embedded candidate below is the one shipped with
-// the 110US client; executablePath is scanned when it is present.
+// decodes it to 32 bytes. Matching candidates are validated against the archive.
 func metadataKeyCandidates(executable []byte) [][]byte {
 	var out [][]byte
 	seen := map[string]bool{}
@@ -339,95 +295,64 @@ func isHexDigit(c byte) bool {
 	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
 
-// paged110EmbeddedMetadataHex is the metadata key shipped with the retail
-// 110US client: the third 64-hex-character run inside DFO.exe.
-const paged110EmbeddedMetadataHex = "21ad8ff286bd11687520212e5dfd064bd9a7ec798f7f78a706b0486e77634489"
-
-func paged110EmbeddedMetadataKey() []byte {
-	b, _ := hex.DecodeString(paged110EmbeddedMetadataHex)
-	return b
-}
-
-// paged110Candidates returns the metadata key candidates to try: the embedded
-// 110US constant first, then anything found in the sidecar executable.
-func paged110Candidates(dir string) [][]byte {
-	embedded := paged110EmbeddedMetadataKey()
-	out := [][]byte{embedded}
-	if dir == "" {
-		return out
-	}
-	exe, err := os.ReadFile(filepath.Join(dir, executableName))
-	if err != nil {
-		return out
-	}
-	seen := map[string]bool{string(embedded): true}
-	for _, c := range metadataKeyCandidates(exe) {
-		if !seen[string(c)] {
-			seen[string(c)] = true
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-// loadPaged110SealedPageKeys returns an archive-local sk.dat when available,
-// falling back to the table bundled into the binary. The external file wins
-// so archives from other 110US client versions can still provide their own
-// page-key table.
-func loadPaged110SealedPageKeys(dir string) ([]byte, error) {
-	if dir != "" {
-		sealed, err := os.ReadFile(filepath.Join(dir, sealedPageKeyName))
-		if err == nil {
-			return sealed, nil
-		}
-	}
-	if len(paged110EmbeddedSealedPageKeys) == 0 {
-		return nil, os.ErrNotExist
-	}
-	return append([]byte(nil), paged110EmbeddedSealedPageKeys...), nil
-}
-
-// unlockPaged unlocks the shared paged layout and retains the identity of the
-// RSA candidate that succeeded. A profile is accepted only after the full
-// sidecar and the archive header validate. data is never modified.
-//
-// The bundled page-key table is used when no archive-local sk.dat exists, and
-// the bundled metadata key is tried first, so the common case never reads the
-// multi-hundred-megabyte sidecar executable.
+// unlockPaged tries complete bundled clients first, then archive-local sidecars.
+// Client identity is accepted only after the decrypted header and layout validate.
+// data is never modified; the bundled fast path does not read sibling files.
 func unlockPaged(data []byte, dir string) (detectedArchive, bool) {
 	if len(data) < paged110PageGuardSize {
 		return detectedArchive{}, false
 	}
-	sealed, err := loadPaged110SealedPageKeys(dir)
-	if err != nil {
-		return detectedArchive{}, false
-	}
-	table, err := unsealPageKeyTable(sealed)
 	keys := paged110Keys()
+	clients := bundledPagedClients()
+	for _, client := range clients {
+		if result, ok := openPagedTable(data, client.table, keys, client.metadata, client.profile); ok {
+			return result, true
+		}
+	}
+	sealedCandidates := loadSealedPageKeyCandidates(dir)
 	var tables []pageKeyTable
-	if err == nil {
-		tables = append(tables, pageKeyTable{data: table, profile: paged110Profile})
-		if dec, pkeys, hdr, ok := decryptPagedWith(data, table, keys, paged110EmbeddedMetadataKey()); ok {
-			return detectedArchive{data: dec, hdr: hdr, keys: keys, format: paged110Profile, pageKeys: pkeys}, true
+	for _, client := range clients {
+		for _, sealed := range sealedCandidates {
+			table, err := unsealPageKeyTableWithKey(sealed, client.key)
+			if err != nil {
+				continue
+			}
+			if result, ok := openPagedTable(data, table, keys, client.metadata, client.profile); ok {
+				return result, true
+			}
+			tables = append(tables, pageKeyTable{data: table, profile: client.profile})
 		}
 	}
 	if dir == "" {
 		return detectedArchive{}, false
 	}
-	exe, err := os.ReadFile(filepath.Join(dir, executableName))
-	if err != nil {
-		return detectedArchive{}, false
-	}
-	tables = append(tables, executablePageKeyTables(exe, sealed)...)
-	candidates := append([][]byte{paged110EmbeddedMetadataKey()}, metadataKeyCandidates(exe)...)
-	for _, table := range tables {
-		for _, cand := range candidates {
-			if dec, pkeys, hdr, ok := decryptPagedWith(data, table.data, keys, cand); ok {
-				return detectedArchive{data: dec, hdr: hdr, keys: keys, format: table.profile, pageKeys: pkeys}, true
+	for _, name := range [...]string{executableName, cnExecutableName} {
+		exe, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		clientTables := append([]pageKeyTable(nil), tables...)
+		for _, sealed := range sealedCandidates {
+			clientTables = append(clientTables, executablePageKeyTables(exe, sealed)...)
+		}
+		clientCandidates := pagedMetadataCandidates(exe)
+		for _, table := range clientTables {
+			for _, cand := range clientCandidates {
+				if result, ok := openPagedTable(data, table.data, keys, cand, table.profile); ok {
+					return result, true
+				}
 			}
 		}
 	}
 	return detectedArchive{}, false
+}
+
+func openPagedTable(data, table []byte, keys keySet, metadata []byte, profile formatProfile) (detectedArchive, bool) {
+	dec, pkeys, hdr, ok := decryptPagedWith(data, table, keys, metadata)
+	if !ok {
+		return detectedArchive{}, false
+	}
+	return detectedArchive{data: dec, hdr: hdr, keys: keys, format: profile, pageKeys: pkeys}, true
 }
 
 // decryptPagedWith unwraps the page key table with cand and, if the header

@@ -113,7 +113,7 @@ func (a *Archive) indexHashRecords(index int32) ([]indexHashRecord, error) {
 // SetIndexHashEntry inserts or updates one `id -> value` entry, writing the
 // value the way the shipped files do: as decimal text referenced by a string
 // token. An existing entry keeps its position while its value token is
-// canonicalized to the UTF-16 pool used by Paged110.
+// canonicalized to the client's string-pool convention.
 func (a *Archive) SetIndexHashEntry(indexHashPath string, id, value uint32) error {
 	index, ok := a.Find(indexHashPath)
 	if !ok {
@@ -150,7 +150,7 @@ func (a *Archive) SetIndexHashEntryForID(indexHashPath string, id uint32) error 
 }
 
 // IndexHashIDsNeedingUpdate returns requested ids that are missing or whose
-// value is not in the canonical 110US form. Paged110 keeps these decimal
+// value is not in the canonical client form. UTF-16-only clients keep decimal
 // strings in the UTF-16 pool even when they contain ASCII only; accepting an
 // existing even offset would preserve a file that the client can parse but
 // does not consume correctly.
@@ -178,7 +178,7 @@ func (a *Archive) IndexHashIDsNeedingUpdate(indexHashPath string, ids []uint32) 
 		seen[id] = struct{}{}
 		record, exists := byID[id]
 		if !exists || !record.hasValue || record.value != IndexHashValue(id) ||
-			record.valToken.typ != 6 || record.valToken.value&1 == 0 {
+			record.valToken.typ != 6 || (a.indexHashRequiresUTF16() && record.valToken.value&1 == 0) {
 			result = append(result, id)
 		}
 	}
@@ -304,10 +304,21 @@ func (a *Archive) setIndexHashEntries(indexHashPath string, ids []uint32, listOr
 }
 
 func (a *Archive) indexHashValueToken(value uint32) batchToken {
+	text := strconv.FormatUint(uint64(value), 10)
+	if !a.indexHashRequiresUTF16() {
+		return batchToken{typ: 6, value: a.StringOffset(text)}
+	}
 	return batchToken{
 		typ:   6,
-		value: a.UnicodeStringOffset(strconv.FormatUint(uint64(value), 10)),
+		value: a.UnicodeStringOffset(text),
 	}
+}
+
+func (a *Archive) indexHashRequiresUTF16() bool {
+	rules := a.ContentRules()
+	// Explicit mixed-pool indexhash clients (100CN) retain their ASCII offsets.
+	// Keep the historical UTF-16 default for callers without indexhash rules.
+	return rules.UTF16Only || !rules.RequiresIndexHash
 }
 
 func (a *Archive) writeIndexHashRecords(index int32, records []indexHashRecord) error {

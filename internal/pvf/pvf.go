@@ -42,7 +42,7 @@ const headerSize = 0x30
 var (
 	ErrInvalidSection       = errors.New("pvf: invalid archive section")
 	ErrTruncated            = errors.New("pvf: data too short to contain a header")
-	ErrBadSignature         = errors.New("pvf: header decryption failed (unknown format or key)")
+	ErrBadSignature         = errors.New("pvf: 无法识别或解封归档；若为其他版本的分页 PVF，请将对应版本的 sk.dat 和 DNF.exe（或 DFO.exe）与 PVF 放在同一目录后重试")
 	ErrOverflow             = errors.New("pvf: header sections exceed the file boundary")
 	ErrNotFound             = errors.New("pvf: file not found")
 	ErrBadIndex             = errors.New("pvf: file index out of range")

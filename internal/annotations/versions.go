@@ -4,7 +4,7 @@ import "strings"
 
 // ValidPVFVersion reports whether a value is a supported configuration version.
 func ValidPVFVersion(version string) bool {
-	return version == "90US" || version == "90CN" || version == "110US" || version == "115US"
+	return version == "90US" || version == "90CN" || version == "110US" || version == "115US" || version == "100CN"
 }
 
 func supportsPVFVersion(versions []string, version string) bool {

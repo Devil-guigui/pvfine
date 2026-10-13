@@ -111,6 +111,34 @@ func TestIndexHashValue(t *testing.T) {
 	}
 }
 
+func TestMixedPoolIndexHashPreservesASCII(t *testing.T) {
+	a := New()
+	a.format = paged100CNProfile
+	const path = "list/equipment_indexhash.etc"
+	value := IndexHashValue(10020)
+	offset := a.StringOffset(strconv.FormatUint(uint64(value), 10))
+	if offset&1 != 0 {
+		t.Fatal("fixture did not use ASCII pool")
+	}
+	a.AddFile(path, encodeBatchTokens([]batchToken{{typ: 0, value: 10020}, {typ: 6, value: offset}}), TypeScript)
+	if ids, err := a.IndexHashIDsNeedingUpdate(path, []uint32{10020}); err != nil || len(ids) != 0 {
+		t.Fatalf("valid ASCII reference treated as damaged: %v", err)
+	}
+	if err := a.SetIndexHashEntriesForIDs(path, []uint32{10020, 10021}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := a.indexHashRecords(mustFind(a, path))
+	if err != nil || len(records) != 2 {
+		t.Fatalf("indexhash update failed: %v", err)
+	}
+	if records[0].valToken.value != offset || records[1].valToken.value&1 != 0 || records[1].value != IndexHashValue(10021) {
+		t.Fatal("mixed-pool update changed encoding or value")
+	}
+	if ids, err := a.IndexHashIDsNeedingUpdate(path, []uint32{10020, 10021}); err != nil || len(ids) != 0 {
+		t.Fatalf("updated entries need another repair: %v", err)
+	}
+}
+
 func TestSetIndexHashEntryForID(t *testing.T) {
 	a := New()
 	a.AddFile("list/equipment_indexhash.etc", buildIndexHash(a, nil), TypeScript)

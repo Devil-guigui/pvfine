@@ -203,8 +203,9 @@ const defaultChunkCacheLimit = int64(64 << 20)
 const defaultResolveCacheLimit = int64(16 << 20)
 
 // Open reads and parses the archive at path. Paged containers may
-// keep their per-page keys in sibling "sk.dat" / "DFO.exe" files; the bundled
-// 110US key table is used when the sibling sk.dat is absent.
+// keep their per-page keys in sibling "sk.dat" and "DFO.exe" / "DNF.exe" files.
+// Complete bundled 110US / 100CN parameters are tried first. Other revisions
+// can supply matching sk.dat and client executables next to the archive.
 func Open(path string) (*Archive, error) {
 	return OpenWithSidecars(path, "")
 }

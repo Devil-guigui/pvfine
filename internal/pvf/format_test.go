@@ -124,7 +124,7 @@ func TestUnknownHashWritePolicy(t *testing.T) {
 }
 
 func TestBatchClonePreservesContainerAndRules(t *testing.T) {
-	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile} {
+	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile, paged100CNProfile} {
 		t.Run(profile.id, func(t *testing.T) {
 			a := New()
 			a.format = profile
@@ -136,8 +136,8 @@ func TestBatchClonePreservesContainerAndRules(t *testing.T) {
 			if !stage.WriteCapabilities().CanSave {
 				t.Fatal("clone lost write state")
 			}
-			if offset := stage.StringOffset("ascii"); offset&1 == 0 {
-				t.Fatal("clone used UTF-8 pool")
+			if offset := stage.StringOffset("ascii"); (offset&1 != 0) != profile.rules.UTF16Only {
+				t.Fatal("clone lost string pool policy")
 			}
 			stage.pageKeys[0] = 1
 			if a.pageKeys[0] != 0 {
@@ -172,7 +172,7 @@ func TestContentRulesIndependentOfContainer(t *testing.T) {
 }
 
 func TestPagedWriteRequiresPageState(t *testing.T) {
-	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile} {
+	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile, paged100CNProfile} {
 		t.Run(profile.id, func(t *testing.T) {
 			a := New()
 			a.format = profile
@@ -236,7 +236,7 @@ func TestParseRejectsInvalidNameSection(t *testing.T) {
 // This exercises page wrapping, parsing, edits and clone/save with synthetic
 // page state, independently of proprietary sidecar fixtures.
 func TestPagedContainerSyntheticRoundTrip(t *testing.T) {
-	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile} {
+	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile, paged100CNProfile} {
 		t.Run(profile.id, func(t *testing.T) {
 			a := New()
 			a.format = profile
@@ -300,8 +300,8 @@ func TestPagedContainerSyntheticRoundTrip(t *testing.T) {
 			if text, err := b.Text(i); err != nil || text != "before" {
 				t.Fatal("staging mutated source")
 			}
-			if len(c.strA) != 0 {
-				t.Fatal("UTF-16-only rule not retained")
+			if (len(c.strA) == 0) != profile.rules.UTF16Only {
+				t.Fatal("string pool policy not retained")
 			}
 			if c.Format() != profile.id || c.ClientVersion() != a.ClientVersion() {
 				t.Fatal("edited archive lost client identity")
@@ -359,7 +359,7 @@ func TestClientVersion(t *testing.T) {
 		want    string
 	}{
 		{standardProfile, "90US"}, {alternateProfile, "90CN"}, {paged110Profile, "110US"},
-		{paged115Profile, "115US"}, {pagedProfile, ""}, {recoveredProfile, ""}, {formatProfile{id: "future"}, ""},
+		{paged115Profile, "115US"}, {pagedProfile, ""}, {recoveredProfile, ""}, {formatProfile{id: "future"}, ""}, {paged100CNProfile, "100CN"},
 	} {
 		a := New()
 		a.format = tc.profile
@@ -377,20 +377,19 @@ func TestClientVersion(t *testing.T) {
 }
 
 func TestPagedClientProfiles(t *testing.T) {
-	key, err := paged110PrivateKey()
-	if err != nil {
-		t.Fatal(err)
+	for _, client := range bundledPagedClients() {
+		if got := pagedClientProfile(&client.key.PublicKey); got.id != client.profile.id {
+			t.Fatal("bundled public identity changed")
+		}
 	}
-	if got := pagedClientProfile(&key.PublicKey); got.id != FormatPaged110 {
-		t.Fatal("embedded 110US client identity changed")
-	}
-	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile} {
+	for _, profile := range []formatProfile{paged110Profile, paged115Profile, pagedProfile, paged100CNProfile} {
 		a := New()
 		a.format = profile
 		if !a.IsPaged() || !a.IsPaged110() || !a.Info().Paged110 {
 			t.Fatal("shared paged capability or legacy compatibility lost")
 		}
-		if a.ContentRules() != paged110Profile.rules {
+		if a.ContentRules().UTF16Only != (profile.id != FormatPaged100CN) ||
+			!a.ContentRules().RequiresIndexHash || !a.ContentRules().SupportsStringReferences {
 			t.Fatal("paged content rules diverged")
 		}
 		if a.Info().Format != profile.id {

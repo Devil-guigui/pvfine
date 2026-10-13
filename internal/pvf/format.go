@@ -24,12 +24,13 @@ type formatProfile struct {
 }
 
 const (
-	FormatStandard  = "standard"
-	FormatAlternate = "alternate"
-	FormatPaged     = "paged"
-	FormatPaged110  = "paged110"
-	FormatPaged115  = "paged115"
-	FormatRecovered = "recovered"
+	FormatStandard   = "standard"
+	FormatAlternate  = "alternate"
+	FormatPaged      = "paged"
+	FormatPaged110   = "paged110"
+	FormatPaged115   = "paged115"
+	FormatRecovered  = "recovered"
+	FormatPaged100CN = "paged100cn"
 )
 
 var standardProfile = formatProfile{id: FormatStandard}
@@ -50,6 +51,14 @@ var paged115Profile = formatProfile{
 	id:        FormatPaged115,
 	container: pagedContainer,
 	rules:     pagedContentRules,
+}
+
+// 100CN shares page guards and the newer list/reference conventions, but
+// retains an ASCII pool. Migrating that pool would rewrite an untouched archive.
+var paged100CNProfile = formatProfile{
+	id:        FormatPaged100CN,
+	container: pagedContainer,
+	rules:     ContentRules{RequiresIndexHash: true, SupportsStringReferences: true},
 }
 
 // WriteCapabilities is derived from both the format and recovered archive
@@ -114,6 +123,8 @@ func (a *Archive) ClientVersion() string {
 		return "110US"
 	case FormatPaged115:
 		return "115US"
+	case FormatPaged100CN:
+		return "100CN"
 	default:
 		return ""
 	}

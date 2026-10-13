@@ -10,7 +10,7 @@ import (
 
 func TestPVFVersionRulesAndSourceRoundTrip(t *testing.T) {
 	document := Document{Version: 1}
-	for i, versions := range [][]string{nil, {}, {"90US"}, {"90CN", "110US"}, {"115US"}} {
+	for i, versions := range [][]string{nil, {}, {"90US"}, {"90CN", "110US"}, {"115US"}, {"100CN"}} {
 		document.Rules = append(document.Rules, Rule{ID: string(rune('a' + i)), PVFVersions: versions,
 			Target: TargetSpec{Kind: "path"}, Annotation: AnnotationSpec{Title: string(rune('a' + i)), Type: "text"}})
 	}
@@ -21,7 +21,7 @@ func TestPVFVersionRulesAndSourceRoundTrip(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		want    int
-	}{{"90US", 3}, {"90CN", 3}, {"110US", 3}, {"115US", 3}, {"", 2}, {"future", 2}} {
+	}{{"90US", 3}, {"90CN", 3}, {"110US", 3}, {"115US", 3}, {"", 2}, {"future", 2}, {"100CN", 3}} {
 		t.Run(tc.version, func(t *testing.T) {
 			runtime := engine.ForVersion(tc.version)
 			if got := len(runtime.AnnotatePath("a.equ", false)[0].RuleIDs); got != tc.want {
@@ -46,6 +46,9 @@ func TestPVFVersionRulesAndSourceRoundTrip(t *testing.T) {
 			}
 			if got := runtime.ForVersion("115US").AnnotatePath("a.equ", false)[0].RuleIDs; !reflect.DeepEqual(got, []string{"a", "b", "e"}) {
 				t.Fatalf("115US enabled rules from a different version: %v", got)
+			}
+			if got := runtime.ForVersion("100CN").AnnotatePath("a.equ", false)[0].RuleIDs; !reflect.DeepEqual(got, []string{"a", "b", "f"}) {
+				t.Fatalf("100CN enabled rules from a different version: %v", got)
 			}
 			if got := len(runtime.ForVersion("90US").AnnotatePath("a.equ", false)[0].RuleIDs); got != 3 {
 				t.Fatal("switching versions lost rules")
