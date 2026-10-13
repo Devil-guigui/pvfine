@@ -258,7 +258,11 @@ func (c *core) startSearchIndexWithOptions(force bool) {
 		c.indexStatus = IndexStatus{State: IndexStateBuilding, Stage: "sqlite", OpenDurationMs: c.indexStatus.OpenDurationMs}
 		status := c.indexStatus
 		c.mu.Unlock()
-		finishTask := c.archiveTasks.begin()
+		finishTask, ok := c.archiveTasks.tryBegin()
+		if !ok {
+			cancel()
+			return
+		}
 		if !c.indexCurrent(a, gen, ctx) {
 			finishTask()
 			return
@@ -302,7 +306,11 @@ func (c *core) startSearchIndexWithOptions(force bool) {
 	status := c.indexStatus
 	c.mu.Unlock()
 
-	finishTask := c.archiveTasks.begin()
+	finishTask, ok := c.archiveTasks.tryBegin()
+	if !ok {
+		cancel()
+		return
+	}
 	if !c.indexCurrent(a, gen, ctx) {
 		finishTask()
 		return

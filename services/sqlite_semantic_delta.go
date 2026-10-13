@@ -280,6 +280,11 @@ func (i *sqliteArchiveIndex) buildSemanticDelta(ctx context.Context, c *core, a 
 		return 0, 0, err
 	}
 	defer stmt.Close()
+	dependencies, err := newSemanticDependencyWriter(ctx, tx)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer dependencies.close()
 	for _, record := range replacements {
 		file, metadata := snapshot.File(record.index), record.metadata
 		name := markedName(metadata)
@@ -302,14 +307,13 @@ func (i *sqliteArchiveIndex) buildSemanticDelta(ctx context.Context, c *core, a 
 			if _, err = tx.ExecContext(ctx, `INSERT INTO visuals VALUES(?,?,?,?,?,?)`, record.index, iconPath, iconIndex, fieldPath, fieldIndex, metadata.RarityValue()); err != nil {
 				return 0, 0, err
 			}
-			if err = writeSemanticDependencies(ctx, tx, snapshot, record.index, metadata); err != nil {
+			if err = dependencies.write(ctx, snapshot, record.index, metadata); err != nil {
 				return 0, 0, err
 			}
 			visualsWritten[record.index] = struct{}{}
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO records(file_index,name,lower_name,record_id,lower_id,path,lower_path,category,list_path,size,data_type)
-SELECT f.file_index,f.name,f.lower_name,'','',f.path,f.lower_path,'file','',f.size,f.data_type FROM files f JOIN semantic_affected a ON a.file_index=f.file_index WHERE NOT EXISTS(SELECT 1 FROM records r WHERE r.file_index=f.file_index)`); err != nil {
+	if err = dependencies.flush(ctx); err != nil {
 		return 0, 0, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE meta SET value='1' WHERE key='complete'; INSERT OR REPLACE INTO meta VALUES('specs',?); DROP TABLE semantic_affected`, searchIndexSpecFingerprint(specs)); err != nil {
@@ -329,14 +333,78 @@ SELECT f.file_index,f.name,f.lower_name,'','',f.path,f.lower_path,'file','',f.si
 	return total, skipped, nil
 }
 
-func writeSemanticDependencies(ctx context.Context, tx *sql.Tx, a *pvf.Archive, index int32, metadata pvf.ScriptMetadata) error {
+// semanticDependencyWriter reuses SQL and mapping expansions for one build.
+// A file can reference the same table through many tokens; emit each dependency once.
+type semanticDependencyWriter struct {
+	tx    *sql.Tx
+	stmts map[int]*sql.Stmt
+	args  []any
+	paths map[int][]string
+}
+
+func newSemanticDependencyWriter(ctx context.Context, tx *sql.Tx) (*semanticDependencyWriter, error) {
+	w := &semanticDependencyWriter{tx: tx, stmts: make(map[int]*sql.Stmt), args: make([]any, 0, 256), paths: make(map[int][]string)}
+	if _, err := w.statement(ctx, 128); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+func (w *semanticDependencyWriter) statement(ctx context.Context, rows int) (*sql.Stmt, error) {
+	if stmt := w.stmts[rows]; stmt != nil {
+		return stmt, nil
+	}
+	query := "INSERT OR IGNORE INTO semantic_dependencies VALUES" + strings.TrimSuffix(strings.Repeat("(?,?),", rows), ",")
+	stmt, err := w.tx.PrepareContext(ctx, query)
+	if err == nil {
+		w.stmts[rows] = stmt
+	}
+	return stmt, err
+}
+
+func (w *semanticDependencyWriter) flush(ctx context.Context) error {
+	if len(w.args) == 0 {
+		return nil
+	}
+	stmt, err := w.statement(ctx, len(w.args)/2)
+	if err != nil {
+		return err
+	}
+	if _, err = stmt.ExecContext(ctx, w.args...); err != nil {
+		return err
+	}
+	clear(w.args)
+	w.args = w.args[:0]
+	return nil
+}
+
+func (w *semanticDependencyWriter) close() {
+	for _, stmt := range w.stmts {
+		_ = stmt.Close()
+	}
+}
+
+func (w *semanticDependencyWriter) write(ctx context.Context, a *pvf.Archive, index int32, metadata pvf.ScriptMetadata) error {
+	seen := make(map[string]struct{})
 	for _, reference := range metadata.StringTableReferences {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO semantic_dependencies VALUES(?,?)`, index, fmt.Sprintf("@string-table:%d", reference.Index)); err != nil {
-			return err
+		paths, ok := w.paths[reference.Index]
+		if !ok {
+			paths = []string{fmt.Sprintf("@string-table:%d", reference.Index)}
+			for _, path := range a.StringTableDependencyPaths(reference.Index) {
+				paths = append(paths, normalizeSearchPath(path))
+			}
+			w.paths[reference.Index] = paths
 		}
-		for _, path := range a.StringTableDependencyPaths(reference.Index) {
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO semantic_dependencies VALUES(?,?)`, index, normalizeSearchPath(path)); err != nil {
-				return err
+		for _, path := range paths {
+			if _, exists := seen[path]; exists {
+				continue
+			}
+			seen[path] = struct{}{}
+			w.args = append(w.args, index, path)
+			if len(w.args) == cap(w.args) {
+				if err := w.flush(ctx); err != nil {
+					return err
+				}
 			}
 		}
 	}
