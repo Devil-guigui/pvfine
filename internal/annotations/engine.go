@@ -850,3 +850,26 @@ func splitPath(value string) []string {
 	}
 	return strings.Split(value, "/")
 }
+
+// ApplicableRuleIDs exposes resolved annotation applicability for the rule editor.
+// Token existence is evaluated by Annotate; here the file/section scope is reported.
+func (e *Engine) ApplicableRuleIDs(filePath, section string, isDir bool) map[string]bool {
+	ids := map[string]bool{}
+	if e == nil {
+		return ids
+	}
+	for _, r := range e.rules {
+		if !r.matches(filePath, isDir) {
+			continue
+		}
+		if section != "" {
+			if !strings.EqualFold(strings.TrimSpace(r.rule.Target.Section), strings.TrimSpace(section)) {
+				continue
+			}
+		} else if r.rule.Target.Kind != "path" {
+			continue
+		}
+		ids[r.rule.ID] = true
+	}
+	return ids
+}

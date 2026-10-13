@@ -15,6 +15,7 @@ import * as FileSetService from "./filesetservice.js";
 import * as ImageService from "./imageservice.js";
 import * as PreviewService from "./previewservice.js";
 import * as RenderingService from "./renderingservice.js";
+import * as RuleService from "./ruleservice.js";
 import * as ScriptService from "./scriptservice.js";
 import * as ScriptWindowService from "./scriptwindowservice.js";
 import * as SettingsService from "./settingsservice.js";
@@ -35,6 +36,7 @@ export {
     ImageService,
     PreviewService,
     RenderingService,
+    RuleService,
     ScriptService,
     ScriptWindowService,
     SettingsService,
@@ -100,6 +102,8 @@ export type {
     PreviewIssue,
     RecoveryInfo,
     RenderingReloadResult,
+    RuleQueryResult,
+    RuleTarget,
     SafeUpgradeRow,
     ScriptApplyResult,
     ScriptCompileResult,

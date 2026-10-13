@@ -145,11 +145,11 @@ description: >-
    go test ./services -run 'Annotation|Rendering' -count=1
    ```
    已有 `LoadDefault` 测试能检查嵌入配置；新增复杂规则时给 `internal/annotations/*_test.go` 或 `internal/pvf/script_render_test.go` 增加“输入 token → 预期标注/换行”的针对性测试，覆盖组首、连续分隔符、尾部不完整记录和不匹配文件。需要检查完整 Go 项目时运行 `go test ./...`；环境/既有无关测试失败要单独说明。
-4. 本地开发从仓库运行时，服务优先寻找 `config/annotations.json`、`config/rendering.json`；打包后可能使用用户配置目录下的运行时副本。`config/paths.json`、`config/sections.json` 由 `internal/annotations/loader.go` 的 `generatedRuleFiles` / `mergeGeneratedRules` 合并，`LoadFile` 先取与规则文件同目录的同名文件，缺失时回退内置数据；`LoadRulesFile` 只读手写规则（编辑器与编辑器预览走它）；`LoadDefault` 结果已缓存，重复调用不会重新解析。修改仓库源文件**不保证已运行的应用自动更新**。按实际启动环境重新打开应用，或调用应用已有的 `AnnotationService.ReloadRules` / `RenderingService.ReloadRules`（会校验并替换活动引擎，失败时保留旧引擎）。不要在没有用户授权时重启、发布或修改用户运行时副本。
+4. 运行时通过 `internal/buildmode.Development` 区分环境：开发构建读取仓库规则，生产构建读取内置规则并合并用户配置目录下的 `annotations.user.json`、`rendering.user.json`（同 ID 用户项整条覆盖，支持屏蔽 ID 与共享字段级联屏蔽），生产构建不会因当前目录位于仓库而改写源文件。旧 `annotations.json`、`rendering.json` 运行时镜像仅在对应用户增量文件不存在时一次性迁移差异，缺失项不视为删除，旧文件保留。`config/paths.json`、`config/sections.json` 由 `internal/annotations/loader.go` 的 `generatedRuleFiles` / `mergeGeneratedRules` 合并，`LoadFile` 先取与规则文件同目录的同名文件，缺失时回退内置数据；`LoadRulesFile` 只读手写规则（编辑器与编辑器预览走它）；`LoadDefault` 结果已缓存，重复调用不会重新解析。修改仓库源文件**不保证已运行的应用自动更新**。按实际启动环境重新打开应用，或调用应用已有的 `AnnotationService.ReloadRules` / `RenderingService.ReloadRules`（应用中的这两个入口与启动共用分层加载器；独立测试指定文件入口仍直接加载指定文件）（会校验并替换活动引擎，失败时保留旧引擎）。不要在没有用户授权时重启、发布或修改用户运行时副本。
 5. 给出修改的文件与规则 ID、几个代表性 token 的预期结果、验证命令与结果，以及是否需要用户主动重新加载。不要只因 JSON 语法通过就声称应用的运行时规则已生效。
 
 ## 5. 参考实现（需要新字段时先核对）
 
 - 标注模型与校验：`internal/annotations/model.go`、`internal/annotations/loader.go`；分组与重复记录：`internal/annotations/engine.go` 的 `repeatedTokenGroups` / `repeatedRecordTokens`；共享字段：`internal/annotations/fields.go`。嵌套段的编辑器视图由 `internal/pvf/script_view.go` 的 `ParseScriptViewWithNestedSections` 解析，`services/annotations.go` 按当前文件的渲染规则提供父子段关系。
 - 渲染模型、匹配优先级与校验：`internal/rendering/model.go`、`internal/rendering/engine.go`、`internal/rendering/loader.go`；实际 token 输出：`internal/pvf/file.go`。
-- 热重载：`services/annotation_service.go`、`services/rendering_service.go`；内置配置来源：`config/embed.go`。如果本 skill 与代码不一致，以**当前代码及有效测试**为准，并同步更新本 skill。
+- 分层存储与就地编辑：`internal/ruleconfig/store.go`、`services/rule_service.go`、`frontend/src/components/RuleEditorModal.vue`；热重载：`services/annotation_service.go`、`services/rendering_service.go`；内置配置来源：`config/embed.go`。如果本 skill 与代码不一致，以**当前代码及有效测试**为准，并同步更新本 skill。

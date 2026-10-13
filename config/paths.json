@@ -248769,20 +248769,6 @@
       "group": "path"
     },
     {
-      "id": "path.dir.clientonly.yr9r6w",
-      "match": {
-        "glob": "clientonly"
-      },
-      "target": {
-        "kind": "path"
-      },
-      "annotation": {
-        "title": "test",
-        "type": "text"
-      },
-      "group": "path"
-    },
-    {
       "id": "path.dir.common.lgol10",
       "match": {
         "glob": "common"

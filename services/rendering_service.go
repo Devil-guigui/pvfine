@@ -1,6 +1,9 @@
 package services
 
-import renderingrules "pvfine/internal/rendering"
+import (
+	"pvfine/internal/buildmode"
+	renderingrules "pvfine/internal/rendering"
+)
 
 // RenderingReloadResult describes the renderer that was activated.
 type RenderingReloadResult struct {
@@ -12,13 +15,17 @@ type RenderingService struct {
 	c       *core
 	path    string
 	initErr error
+	layered bool
 }
 
 // NewRenderingService creates the Wails-facing rendering configuration
-// service. Development builds prefer the repository config; packaged builds
-// use the per-user runtime mirror.
+// service. Applications use the shared layered rule store; isolated consumers
+// may reload a standalone configuration file.
 func NewRenderingService(c *core) *RenderingService {
-	if path, ok := renderingrules.FindSourcePath(); ok {
+	if c.ruleStore != nil {
+		return &RenderingService{c: c, layered: true}
+	}
+	if path, ok := renderingrules.FindSourcePath(); buildmode.Development && ok {
 		return &RenderingService{c: c, path: path}
 	}
 	path, err := renderingrules.RuntimePath()
@@ -35,6 +42,14 @@ func newRenderingService(c *core, path string) *RenderingService {
 // ReloadRules validates the on-disk rendering rules before replacing the
 // active renderer. Invalid files leave the current renderer untouched.
 func (s *RenderingService) ReloadRules() (RenderingReloadResult, error) {
+	if s.layered {
+		if err := NewRuleService(s.c).reload("rendering"); err != nil {
+			return RenderingReloadResult{}, err
+		}
+		s.c.mu.RLock()
+		defer s.c.mu.RUnlock()
+		return RenderingReloadResult{RuleCount: len(s.c.renderingEngine.Document().Rules)}, nil
+	}
 	if s.initErr != nil {
 		return RenderingReloadResult{}, s.initErr
 	}

@@ -154,6 +154,7 @@ func main() {
 			application.NewService(services.NewExportService(core)),
 			application.NewService(services.NewAnnotationService(core)),
 			application.NewService(services.NewRenderingService(core)),
+			application.NewService(services.NewRuleService(core)),
 			application.NewService(services.NewPreviewService(core)),
 			application.NewService(services.NewImageService(core, settingsService)),
 			application.NewService(services.NewFileGUIService(core)),

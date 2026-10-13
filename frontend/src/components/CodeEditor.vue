@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { sectionAt } from "../sectionContext";
 import { rarityTextStyle } from "../rarity";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
@@ -45,7 +46,7 @@ import { autocompletion, type CompletionContext, type CompletionResult } from "@
 import { javascript } from "@codemirror/lang-javascript";
 import { tags } from "@lezer/highlight";
 import { vim } from "@replit/codemirror-vim";
-import { NTooltip } from "naive-ui";
+import { NDropdown, NTooltip } from "naive-ui";
 import { annotationAt, forEachVisibleAnnotation, indexAnnotations, referenceAt, type AnnotationRange } from "../editorAnnotations";
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
 import { luaLanguage } from "../luaLanguage";
@@ -60,6 +61,7 @@ import type { ResolvedThemeId } from "../theme";
 
 const props = defineProps<{
   doc: string;
+  ruleEditing?: boolean;
   language?: "pvf" | "javascript" | "typescript" | "lua";
   readOnly?: boolean;
   annotations?: EditorAnnotation[];
@@ -71,6 +73,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "change", text: string): void;
+  (e: "section-rules", category: "annotations" | "rendering", section: string): void;
   (e: "open-reference", fileIndex: number): void;
   (e: "edit-placeholder", request: PlaceholderEditRequest): void;
 }>();
@@ -85,6 +88,12 @@ export interface PlaceholderEditRequest {
   missing: boolean;
 }
 
+const sectionMenu = ref({show:false,x:0,y:0,section:""});
+const sectionMenuOptions = [{label:"标注规则…",key:"annotations"},{label:"渲染规则…",key:"rendering"}];
+function selectSectionRule(key: string | number) {
+  sectionMenu.value.show=false;
+  emit("section-rules",key as "annotations" | "rendering",sectionMenu.value.section);
+}
 const host = ref<HTMLDivElement | null>(null);
 let view: EditorView | null = null;
 let paintFrame: number | undefined;
@@ -549,6 +558,18 @@ function makeExtensions(themeId: ResolvedThemeId) {
       { key: "Tab", run: insertTab, shift: indentLess },
     ]),
     EditorView.domEventHandlers({
+      contextmenu(event, currentView) {
+        sectionMenu.value.show = false;
+        if (!isPvf || !props.ruleEditing) return false;
+        const mouse = event as MouseEvent;
+        const position = currentView.posAtCoords({x:mouse.clientX,y:mouse.clientY});
+        if (position === null) return false;
+        const section = sectionAt(currentView.state.doc.toString(), position);
+        if (!section) return false;
+        event.preventDefault();
+        sectionMenu.value = {show:true,x:mouse.clientX,y:mouse.clientY,section};
+        return true;
+      },
       mouseover(event, currentView) {
         const display = currentView.state.field(annotationDisplayField, false);
         if (display?.placement !== "hidden") return false;
@@ -804,6 +825,7 @@ watch(
 </script>
 
 <template>
+  <NDropdown trigger="manual" :show="sectionMenu.show" :x="sectionMenu.x" :y="sectionMenu.y" :options="sectionMenuOptions" @select="selectSectionRule" @clickoutside="sectionMenu.show=false" />
   <div ref="host" class="code-editor" />
   <NTooltip
     :show="annotationTooltip.visible"

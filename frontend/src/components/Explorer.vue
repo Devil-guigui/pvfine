@@ -27,8 +27,10 @@ import { useBatchStore } from "../stores/batch";
 import { useImportStore } from "../stores/import";
 import { useExportStore } from "../stores/export";
 import { useSettingsStore } from "../stores/settings";
+import { useRuleEditorStore } from "../stores/ruleEditor";
 import FileTree from "./FileTree.vue";
 
+const ruleEditor = useRuleEditorStore();
 const archive = useArchiveStore();
 const explorer = useExplorerStore();
 const editor = useEditorStore();
@@ -174,6 +176,9 @@ const contextMenuOptions = computed(() => [
     key: "batch",
     disabled: copyMenuDisabled.value,
   },
+  { type: "divider", key: "rule-divider" },
+  { label: "标注规则…", key: "annotation-rules", disabled: contextMenu.value.items.length !== 1 },
+  { label: "渲染规则…", key: "rendering-rules", disabled: contextMenu.value.items.length !== 1 },
 ]);
 
 watch(
@@ -636,6 +641,11 @@ async function onBookmarkSelected(items: TreeItem[]): Promise<void> {
 }
 
 async function onContextMenuSelect(key: string | number): Promise<void> {
+  if (key === "annotation-rules" || key === "rendering-rules") {
+    const item = contextMenu.value.items[0];
+    if (item && contextMenu.value.items.length === 1) ruleEditor.open({category:key === "annotation-rules" ? "annotations" : "rendering", path:item.key, directory:item.isDir, section:""});
+    hideContextMenu(); return;
+  }
   if (key === "new-file") {
     openNewFileDialog(contextMenu.value.anchor);
     return;

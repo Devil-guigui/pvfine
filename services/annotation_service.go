@@ -1,6 +1,9 @@
 package services
 
-import annotationrules "pvfine/internal/annotations"
+import (
+	annotationrules "pvfine/internal/annotations"
+	"pvfine/internal/buildmode"
+)
 
 type AnnotationReloadResult struct {
 	RuleCount     int `json:"ruleCount"`
@@ -11,10 +14,14 @@ type AnnotationService struct {
 	c       *core
 	path    string
 	initErr error
+	layered bool
 }
 
 func NewAnnotationService(c *core) *AnnotationService {
-	if path, ok := annotationrules.FindSourcePath(); ok {
+	if c.ruleStore != nil {
+		return &AnnotationService{c: c, layered: true}
+	}
+	if path, ok := annotationrules.FindSourcePath(); buildmode.Development && ok {
 		return &AnnotationService{c: c, path: path}
 	}
 	path, err := annotationrules.RuntimePath()
@@ -31,6 +38,15 @@ func newAnnotationService(c *core, path string) *AnnotationService {
 // ReloadRules validates the on-disk rules before atomically replacing the
 // active engine. Invalid files leave the current engine untouched.
 func (s *AnnotationService) ReloadRules() (AnnotationReloadResult, error) {
+	if s.layered {
+		if err := NewRuleService(s.c).reload("annotations"); err != nil {
+			return AnnotationReloadResult{}, err
+		}
+		s.c.mu.RLock()
+		defer s.c.mu.RUnlock()
+		document := s.c.annotationEngine.Document()
+		return AnnotationReloadResult{RuleCount: len(document.Rules), RelationCount: len(document.Relations)}, nil
+	}
 	if s.initErr != nil {
 		return AnnotationReloadResult{}, s.initErr
 	}

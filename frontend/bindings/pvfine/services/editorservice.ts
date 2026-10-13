@@ -37,6 +37,13 @@ export function GetAnnotations(index: number): $CancellablePromise<$models.Edito
 }
 
 /**
+ * GetAnnotationsForText annotates a frontend draft without committing it to the archive.
+ */
+export function GetAnnotationsForText(index: number, text: string): $CancellablePromise<$models.EditorAnnotation[] | null> {
+    return $Call.ByID(1012716402, index, text);
+}
+
+/**
  * GetFile 返回文件的反编译文本(内存编辑视图)。
  */
 export function GetFile(index: number): $CancellablePromise<$models.FileMeta | null> {

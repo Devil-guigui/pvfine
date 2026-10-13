@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRuleEditorStore } from "../stores/ruleEditor";
 import { computed, reactive, ref, watch } from "vue";
 import { Clipboard } from "@wailsio/runtime";
 import {
@@ -55,6 +56,7 @@ import type { PreviewFile } from "../previews/types";
 import type { ResolvedThemeId } from "../theme";
 import type { ListRegistrationTarget } from "../../bindings/pvfine/services/models";
 
+const ruleEditor = useRuleEditorStore();
 const props = defineProps<{
   paneId: EditorPaneId;
   themeId: ResolvedThemeId;
@@ -951,6 +953,7 @@ function onDrop(event: DragEvent): void {
             <CodeEditor
               :ref="(instance: unknown) => setEditorRef(tab.index, instance)"
               :doc="tab.text"
+              :rule-editing="true"
               :language="archiveEditorLanguage(tab.path)"
               :read-only="!tab.editable || editor.guiApplying"
               :annotations="tab.annotations"
@@ -961,6 +964,7 @@ function onDrop(event: DragEvent): void {
               @change="(text: string) => editor.updateContent(tab.index, text)"
               @open-reference="(fileIndex: number) => editor.openFile(fileIndex, paneId)"
               @edit-placeholder="(request: PlaceholderEditRequest) => openPlaceholderEdit(tab.index, request)"
+              @section-rules="(category: 'annotations' | 'rendering', section: string) => ruleEditor.open({category,path:tab.path,section,directory:false})"
             />
             <PreviewHost
               v-if="previewProviderFor(tab)"

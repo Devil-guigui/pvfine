@@ -962,10 +962,10 @@ export const useEditorStore = defineStore("editor", () => {
 
   async function refreshAnnotations() {
     await Promise.all(
-      tabs.value.filter((tab) => !tab.loading && !tab.loadError).map(async (tab) => {
+      allFiles.value.filter((tab) => !tab.loading && !tab.loadError).map(async (tab) => {
         const text = tab.text;
-        const annotations = (await EditorService.GetAnnotations(tab.index)) ?? [];
-        const current = tabs.value.find((item) => item.index === tab.index);
+        const annotations = (await EditorService.GetAnnotationsForText(tab.index, text)) ?? [];
+        const current = allFiles.value.find((item) => item.index === tab.index);
         if (!current || current.text !== text) return;
         current.annotations = cleanEditorAnnotations(annotations);
       })
@@ -993,7 +993,11 @@ export const useEditorStore = defineStore("editor", () => {
           current.text = meta.text;
           if (!meta.modified) current.original = meta.text;
         }
-        current.annotations = cleanEditorAnnotations(meta.annotations);
+        if (isDirty(current)) {
+          const text = current.text;
+          const annotations = await EditorService.GetAnnotationsForText(current.index, text);
+          if (current.text === text && allFiles.value.includes(current)) current.annotations = cleanEditorAnnotations(annotations);
+        } else current.annotations = cleanEditorAnnotations(meta.annotations);
       })
     );
   }

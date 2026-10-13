@@ -4,6 +4,9 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as pvf$0 from "../internal/pvf/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as ruleconfig$0 from "../internal/ruleconfig/models.js";
 
 /**
  * AdvancedSearchDetail explains why a file matched the query.
@@ -639,6 +642,20 @@ export interface RecoveryInfo {
  */
 export interface RenderingReloadResult {
     "ruleCount": number;
+}
+
+export interface RuleQueryResult {
+    "revision": string;
+    "development": boolean;
+    "entries": ruleconfig$0.Entry[] | null;
+    "relations": string[] | null;
+}
+
+export interface RuleTarget {
+    "category": string;
+    "path": string;
+    "section": string;
+    "directory": boolean;
 }
 
 /**

@@ -20,6 +20,7 @@ import ImportModal from "./components/ImportModal.vue";
 import ExportModal from "./components/ExportModal.vue";
 import VersionPanel from "./components/VersionPanel.vue";
 import DropRateEditorModal from "./components/DropRateEditorModal.vue";
+import RuleEditorModal from "./components/RuleEditorModal.vue";
 import SettingsModal from "./components/SettingsModal.vue";
 import CloseGuard from "./components/CloseGuard.vue";
 import EditorCloseGuard from "./components/EditorCloseGuard.vue";
@@ -233,6 +234,7 @@ function executeShortcut(command: ShortcutCommandId): void {
           <VersionPanel />
           <DropRateEditorModal />
           <SettingsModal />
+          <RuleEditorModal />
           <div class="app-body">
             <div class="explorer-pane" :style="{ width: explorerWidth + 'px' }">
               <Explorer />

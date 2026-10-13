@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
 
-const api = vi.hoisted(() => ({ GetFileBasic: vi.fn(), GetFile: vi.fn(), showArchiveEditor: vi.fn(), ApplyShopEdit: vi.fn(), refreshInfo: vi.fn() }));
+const api = vi.hoisted(() => ({ GetFileBasic: vi.fn(), GetFile: vi.fn(), GetAnnotationsForText: vi.fn(), showArchiveEditor: vi.fn(), ApplyShopEdit: vi.fn(), refreshInfo: vi.fn() }));
 vi.mock("@wailsio/runtime", () => ({ Events: { On: vi.fn() } }));
 vi.mock("../bindings/pvfine/services", () => ({ EditorService: api, ArchiveService: {}, FileGUIService: api }));
 vi.mock("../src/stores/archive", () => ({ useArchiveStore: () => ({ refreshInfo: api.refreshInfo }) }));
@@ -25,6 +25,7 @@ beforeEach(() => {
   setActivePinia(createPinia());
   vi.resetAllMocks();
   api.GetFile.mockResolvedValue(null);
+  api.GetAnnotationsForText.mockResolvedValue([]);
 });
 
 test("自动换行在加载完成前按行长决定，普通文件默认开启", async () => {
@@ -241,4 +242,20 @@ test("商店草稿过期或提交失败保留现有内容并释放锁", async ()
   await expect(store.applyShopEdit({ ...request, text: "new draft" })).rejects.toThrow("已过期");
   expect(store.tabs[0].text).toBe("new draft");
   expect(store.guiApplying).toBe(false); expect(store.saving).toBe(false);
+});
+
+
+test("规则刷新按未保存文本重算标注并保留草稿", async () => {
+  api.GetFileBasic.mockResolvedValue(meta(1, "original"));
+  const store = useEditorStore();
+  await store.openFile(1);
+  store.updateContent(1, "draft\n[name]\n123");
+  api.GetFile.mockResolvedValue(meta(1, "rendered"));
+  api.GetAnnotationsForText.mockResolvedValue([{start:6,end:12,title:"new",type:"text"}]);
+  await store.refreshRenderedText();
+  expect(store.activeTab?.text).toBe("draft\n[name]\n123");
+  expect(api.GetAnnotationsForText).toHaveBeenLastCalledWith(1, "draft\n[name]\n123");
+  expect(store.activeTab?.annotations[0]?.start).toBe(6);
+  await store.refreshAnnotations();
+  expect(api.GetAnnotationsForText).toHaveBeenLastCalledWith(1, "draft\n[name]\n123");
 });

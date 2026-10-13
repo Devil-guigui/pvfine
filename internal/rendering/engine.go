@@ -165,3 +165,26 @@ func splitPath(value string) []string {
 	}
 	return strings.Split(value, "/")
 }
+
+// EffectiveRuleID reports the selected rule for management UI diagnostics.
+func (e *Engine) EffectiveRuleID(filePath, section, kind string) string {
+	if e == nil {
+		return ""
+	}
+	bestSpecificity, bestOrder := -1, -1
+	id := ""
+	for _, compiled := range e.rules {
+		r := compiled.rule
+		if r.Target.Kind != kind || !compiled.matches(filePath) {
+			continue
+		}
+		if kind == "section" && !strings.EqualFold(strings.TrimSpace(r.Target.Section), strings.TrimSpace(section)) {
+			continue
+		}
+		if compiled.specificity < bestSpecificity || (compiled.specificity == bestSpecificity && compiled.order < bestOrder) {
+			continue
+		}
+		bestSpecificity, bestOrder, id = compiled.specificity, compiled.order, r.ID
+	}
+	return id
+}

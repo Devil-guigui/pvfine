@@ -200,6 +200,22 @@ func (s *EditorService) GetAnnotations(index int32) ([]EditorAnnotation, error) 
 	return s.c.editorAnnotationsLocked(index, text)
 }
 
+// GetAnnotationsForText annotates a frontend draft without committing it to the archive.
+func (s *EditorService) GetAnnotationsForText(index int32, text string) ([]EditorAnnotation, error) {
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
+	if s.c.archive == nil {
+		return nil, ErrNoArchive
+	}
+	if err := validateAnnotationIndex(s.c.archive, index); err != nil {
+		return nil, err
+	}
+	if s.c.archive.File(index).DataType != pvf.TypeScript {
+		return []EditorAnnotation{}, nil
+	}
+	return s.c.editorAnnotationsLocked(index, text)
+}
+
 // SetText 把编辑后的文本写入内存 overlay(不落盘)。
 func (s *EditorService) SetText(index int32, text string) error {
 	_, _, err := s.c.setText(index, text)

@@ -20,6 +20,7 @@ import (
 	annotationrules "pvfine/internal/annotations"
 	"pvfine/internal/pvf"
 	renderingrules "pvfine/internal/rendering"
+	"pvfine/internal/ruleconfig"
 	pvfversion "pvfine/internal/version"
 )
 
@@ -75,6 +76,9 @@ type pathEntry struct {
 // core owns the loaded archive plus derived indexes. Guarded by mu; all
 // services take it per call.
 type core struct {
+	ruleMu              sync.Mutex
+	ruleStore           *ruleconfig.Store
+	ruleWarnings        []string
 	settings            *SettingsService
 	mu                  sync.RWMutex
 	archive             *pvf.Archive
@@ -172,6 +176,7 @@ func newCore() *core { return makeCore() }
 // NewCore creates the shared service state (one per application).
 func NewCore(settings ...*SettingsService) *core {
 	c := makeCore()
+	c.initializeRuleStore()
 	if len(settings) > 0 {
 		c.settings = settings[0]
 	}
