@@ -58,6 +58,13 @@ func (e *Engine) Document() Document {
 	document := e.document
 	document.Rules = append([]Rule(nil), e.document.Rules...)
 	for index := range document.Rules {
+		if widths := document.Rules[index].Format.TokensPerLineByVersion; widths != nil {
+			cloned := make(map[string]int, len(widths))
+			for version, width := range widths {
+				cloned[version] = width
+			}
+			document.Rules[index].Format.TokensPerLineByVersion = cloned
+		}
 		document.Rules[index].Match.Extensions = append([]string(nil), document.Rules[index].Match.Extensions...)
 		document.Rules[index].Format.StandaloneValues = append([]int32(nil), document.Rules[index].Format.StandaloneValues...)
 		document.Rules[index].Format.NestedSections = append([]string(nil), document.Rules[index].Format.NestedSections...)

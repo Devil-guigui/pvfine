@@ -132,6 +132,16 @@ func Validate(document Document) error {
 		if rule.Format.TokensPerLine <= 0 {
 			problems = append(problems, prefix+".format.tokensPerLine 必须是正数")
 		}
+		for version, width := range rule.Format.TokensPerLineByVersion {
+			switch version {
+			case "90US", "90CN", "TW", "100CN", "110US", "115US":
+			default:
+				problems = append(problems, prefix+".format.tokensPerLineByVersion 包含无效版本 "+version)
+			}
+			if width <= 0 {
+				problems = append(problems, prefix+".format.tokensPerLineByVersion 的行宽必须是正数")
+			}
+		}
 		if rule.Format.TokensPerLineIndex != nil && *rule.Format.TokensPerLineIndex < 0 {
 			problems = append(problems, prefix+".format.tokensPerLineIndex 不能为负数")
 		}

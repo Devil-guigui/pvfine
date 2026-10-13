@@ -169,6 +169,11 @@ const formFields = computed<FormField[]>(() => {
         type: "json",
       },
       {
+        path: "format.tokensPerLineByVersion",
+        label: "按 PVF 版本设置每行数量 JSON",
+        type: "json",
+      },
+      {
         path: "format.nestedSections",
         label: "嵌套 Section 列表",
         type: "list",

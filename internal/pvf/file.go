@@ -350,7 +350,7 @@ func (a *Archive) decodeScriptForPathWithRenderer(raw []byte, path string, rende
 	sectionFormats, sectionClosers := a.scriptSectionFormats(raw, path, renderer)
 	fileRule := scriptFormatRuleFromSpec(rendering.FormatSpec{})
 	if renderer != nil {
-		fileRule = scriptFormatRuleFromSpec(renderer.FileFormat(path))
+		fileRule = scriptFormatRuleFromSpec(renderer.FileFormat(path).ForVersion(a.ClientVersion()))
 	}
 	n := len(raw) / 5
 
@@ -725,7 +725,7 @@ func (a *Archive) scriptSectionFormats(raw []byte, path string, renderer *render
 			}
 			format := scriptFormatRule{}
 			if renderer != nil {
-				format = scriptFormatRuleFromSpec(renderer.SectionFormat(path, name))
+				format = scriptFormatRuleFromSpec(renderer.SectionFormat(path, name).ForVersion(a.ClientVersion()))
 			}
 			frame := &scriptRenderSection{
 				name:         name,

@@ -134,12 +134,48 @@ go test ./internal/pvf ./services -run '^TestTW' -count=1
 真实样本含 951,559 个文件、1,137,629 个字符串；验证范围为离线读写，
 未进行游戏客户端实机加载。
 
-### TW 基础掉率
+### 基础掉率的版本兼容
 
-“基础掉率”工具支持 90US、90CN 和 TW。TW 使用现有四个掉率文件及
-`[basis of rarity dicision]`，每组 6 个值；90 系列常见每组 7 个值。
-读写均按各文件的 section 总长度验证分组宽度，只接受完整的 6/7 值分组。
+“基础掉率”工具支持 90US、90CN、TW、110US 和 100CN。五种版本使用
+相同的四个掉率文件及 `[basis of rarity dicision]`；TW 每组 6 个值，
+90 系列常见每组 7 个值，100CN 每组 8 个值，110US 每组 9 个值。
+读写均按各文件的 section 总长度验证分组宽度，只接受完整的 6/7/8/9 值分组。
 调整概率只更新前四个累计阈值，保留地狱文件前置值、终止阈值和附加字段。
 
 真实 TW 的四类掉率读取、调整、TW 格式保存重开和附加字段保留已验证。
 可使用 `PVF_TW_TESTFILE` 运行 `TestDropRateServiceTWRealRoundTrip`。
+
+110US 样本的翻牌、小怪、精英段长度分别为 9、36、36，地狱段为
+1 个前置值加 2 组 9 个值，共 19 个值。100CN 对应长度为 8、32、32、17。
+本次仍编辑五档基础概率，后续新增阈值不重新解释；前五档终止阈值不在
+既有兼容范围内时继续拒绝，避免把其他档位的份额归入现有五档。
+`item drop rarity control`、其他 section 和其他组的内容均原样保留。
+
+真实高版本验证包括四个文件的读取、第一组概率调整、逐 token 确认仅四个
+累计阈值变化，以及分页格式保存重开后的完整载荷一致性。仍保留 90US、
+90CN 和 TW 的原有支持，未验证的 115US 和通用分页格式暂不开放。
+
+```sh
+PVF_TESTFILE="$PWD/testdata/110US.pvf" \
+go test ./services -run '^TestDropRateServicePagedRealRoundTrip$' -count=1
+PVF_TESTFILE="$PWD/testdata/100CN.pvf" \
+go test ./services -run '^TestDropRateServicePagedRealRoundTrip$' -count=1
+```
+
+### 掉率字段按版本换行
+
+`config/rendering.json` 中现有的 `section.basis of rarity dicision` 和
+`section.basis of rarity dicision.hell` 增加 `format.tokensPerLineByVersion`：
+90US/90CN 为 7、TW 为 6、100CN 为 8、110US 为 9。深渊规则继续使用
+`offset: 1`，首个数量值独占一行。未配置或未知版本保留 `tokensPerLine: 7`
+的回退行为，不推测尚未验证的 115US 分组宽度。
+
+`tokensPerLineByVersion` 是可选的版本→正整数行宽映射；文件级和 section
+级规则均可使用。解析时先选择现有优先级规则，再按 `ClientVersion()` 取得
+行宽；如另有 `tokensPerLineIndex`，token 中的动态宽度仍优先。旧规则无需
+迁移，规则管理界面可通过 JSON 字段调整此映射。
+
+五个版本的真实样本已检查四类掉率的行数和每行宽度；合成 token 测试覆盖
+版本映射、未知版本回退、深渊首值单行、普通段分组及原始 token 字节往返。
+仓库规则修改后，运行中的应用仍需重新加载渲染规则；生产应用须包含更新后
+的内置配置，不会自动读取当前仓库的 JSON。

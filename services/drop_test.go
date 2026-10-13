@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"os"
 	"strconv"
@@ -176,12 +177,12 @@ func TestValidateDropRates(t *testing.T) {
 }
 
 func TestSupportedDropRateVersion(t *testing.T) {
-	for _, version := range []string{"90US", "90CN", "TW"} {
+	for _, version := range []string{"90US", "90CN", "TW", "110US", "100CN"} {
 		if !supportedDropRateVersion(version) {
 			t.Fatalf("version %s should be supported", version)
 		}
 	}
-	for _, version := range []string{"110US", "115US", "", "recovered"} {
+	for _, version := range []string{"115US", "", "recovered"} {
 		if supportedDropRateVersion(version) {
 			t.Fatalf("version %s should be rejected", version)
 		}
@@ -297,7 +298,9 @@ func verifyDropRateApplyPreservesFields(t *testing.T, a *pvf.Archive) {
 		t.Fatal(err)
 	}
 	before := make(map[string][]int64)
+	beforeRaw := make(map[string][]byte)
 	for i, spec := range dropRateFileSpecs {
+		beforeRaw[spec.key] = snapshotDropFile(t, a, spec.path)
 		doc, err := a.ParseScriptDocument(snapshotDropFile(t, a, spec.path))
 		if err != nil {
 			t.Fatal(err)
@@ -317,7 +320,30 @@ func verifyDropRateApplyPreservesFields(t *testing.T, a *pvf.Archive) {
 		t.Fatalf("changed files = %d", len(result.FileIndexes))
 	}
 	for _, spec := range dropRateFileSpecs {
-		doc, err := a.ParseScriptDocument(snapshotDropFile(t, a, spec.path))
+		afterRaw := snapshotDropFile(t, a, spec.path)
+		original := beforeRaw[spec.key]
+		if len(afterRaw) != len(original) {
+			t.Fatalf("%s payload size changed", spec.key)
+		}
+		thresholdStart := -1
+		for pos := 0; pos+5 <= len(original); pos += 5 {
+			if original[pos] == 3 && a.ResolveString(int32(binary.LittleEndian.Uint32(original[pos+1:]))) == "["+dropRateSectionName+"]" {
+				thresholdStart = pos + 5 + spec.offset*5
+				break
+			}
+		}
+		if thresholdStart < 0 {
+			t.Fatal("drop section token missing")
+		}
+		for pos := 0; pos+5 <= len(original); pos += 5 {
+			if bytes.Equal(original[pos:pos+5], afterRaw[pos:pos+5]) {
+				continue
+			}
+			if pos < thresholdStart || pos >= thresholdStart+4*5 || original[pos] != 0 || afterRaw[pos] != 0 {
+				t.Fatalf("%s changed token outside the four probability thresholds at %d", spec.key, pos/5)
+			}
+		}
+		doc, err := a.ParseScriptDocument(afterRaw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -346,6 +372,11 @@ func verifyDropRateApplyPreservesFields(t *testing.T, a *pvf.Archive) {
 	defer b.Release()
 	if b.Format() != a.Format() {
 		t.Fatal("archive format changed")
+	}
+	for _, spec := range dropRateFileSpecs {
+		if !bytes.Equal(snapshotDropFile(t, a, spec.path), snapshotDropFile(t, b, spec.path)) {
+			t.Fatalf("%s payload changed on save/reopen", spec.key)
+		}
 	}
 	reopened, err := readDropRateDocument(b)
 	if err != nil {
@@ -382,4 +413,90 @@ func TestDropRateGroupWidthRejectsInvalidLayout(t *testing.T) {
 			t.Fatalf("accepted %d values", n)
 		}
 	}
+}
+
+func TestDropRateServiceEightAndNineValueGroups(t *testing.T) {
+	for _, width := range []int{8, 9} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
+			a := makeDropRateArchive(t)
+			for _, spec := range dropRateFileSpecs {
+				index, _ := a.Find(spec.path)
+				doc, err := a.ParseScriptDocument(snapshotDropFile(t, a, spec.path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				section, _ := doc.Section([]string{dropRateSectionName}, 0)
+				values, err := scriptIntegerValues(section.Values(), spec.path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var text strings.Builder
+				text.WriteString("[" + dropRateSectionName + "]\n")
+				if spec.offset > 0 {
+					text.WriteString(strconv.FormatInt(values[0], 10))
+					text.WriteByte(' ')
+				}
+				for group := 0; group < spec.groupCount; group++ {
+					start := spec.offset + group*7
+					for _, value := range values[start : start+6] {
+						text.WriteString(strconv.FormatInt(value, 10))
+						text.WriteByte(' ')
+					}
+					for j := 6; j < width; j++ {
+						text.WriteString(strconv.Itoa(1000000 + j - 3))
+						text.WriteByte(' ')
+					}
+				}
+				// Preserve another section as well as the extra threshold slots.
+				text.WriteString("\n[item drop rarity control]\n2 13 17 0 -5\n")
+				if err := a.SetText(index, text.String()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			verifyDropRateApplyPreservesFields(t, a)
+		})
+	}
+}
+
+func TestDropRateServicePagedRealRoundTrip(t *testing.T) {
+	path := os.Getenv("PVF_TESTFILE")
+	if path == "" {
+		t.Skip("PVF_TESTFILE not set")
+	}
+	a, err := pvf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := a.ClientVersion()
+	if version != "110US" && version != "100CN" {
+		a.Release()
+		t.Skip("110US/100CN fixture required")
+	}
+	expectedWidth := 9
+	if version == "100CN" {
+		expectedWidth = 8
+	}
+	for _, spec := range dropRateFileSpecs {
+		doc, err := a.ParseScriptDocument(snapshotDropFile(t, a, spec.path))
+		if err != nil {
+			a.Release()
+			t.Fatal(err)
+		}
+		section, _ := doc.Section([]string{dropRateSectionName}, 0)
+		if section == nil {
+			a.Release()
+			t.Fatal("drop section missing")
+		}
+		values, err := scriptIntegerValues(section.Values(), spec.path)
+		if err != nil {
+			a.Release()
+			t.Fatal(err)
+		}
+		width, err := dropRateGroupWidth(values, spec)
+		if err != nil || width != expectedWidth {
+			a.Release()
+			t.Fatalf("unexpected %s group width: %d %v", version, width, err)
+		}
+	}
+	verifyDropRateApplyPreservesFields(t, a)
 }

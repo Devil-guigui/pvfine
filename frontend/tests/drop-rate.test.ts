@@ -47,7 +47,7 @@ test("四类掉率的表单校验要求每组总和为 100.00%", () => {
 });
 
 
-test("TW 与 90US/90CN 可以打开基础掉率，分页格式仍禁用", async () => {
+test("已验证的五个版本可以打开基础掉率，其余格式仍禁用", async () => {
  setActivePinia(createPinia());
  api.archive = reactive({ open: true, info: { format: "tw" } });
  const store = useDropRateStore();
@@ -57,7 +57,7 @@ test("TW 与 90US/90CN 可以打开基础掉率，分页格式仍禁用", async 
  expect(await store.load()).toBe(true);
  expect(store.pvfVersion).toBe("TW");
  expect(store.validationError).toBe("");
- for (const format of ["standard","alternate"]) { api.archive.info.format=format; expect(store.supported).toBe(true); }
- for (const format of ["paged110","paged115","paged100cn","recovered"]) { api.archive.info.format=format; expect(store.supported).toBe(false); }
+ for (const format of ["standard","alternate","paged110","paged100cn"]) { api.archive.info.format=format; expect(store.supported).toBe(true); }
+ for (const format of ["paged115","paged","recovered"]) { api.archive.info.format=format; expect(store.supported).toBe(false); }
  api.archive.info.format="tw"; api.archive.open=false; expect(store.supported).toBe(false);
 });

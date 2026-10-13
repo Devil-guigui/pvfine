@@ -2,6 +2,9 @@ package pvf
 
 import (
 	"bytes"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	"pvfine/internal/rendering"
@@ -277,4 +280,148 @@ func encodedPayloadForTest(t *testing.T, a *Archive, index int32) []byte {
 		t.Fatal(err)
 	}
 	return append([]byte(nil), raw...)
+}
+
+func TestDropRateRenderingUsesClientGroupWidth(t *testing.T) {
+	for _, tc := range []struct {
+		profile formatProfile
+		width   int
+	}{
+		{standardProfile, 7}, {alternateProfile, 7}, {twProfile, 6}, {paged100CNProfile, 8}, {paged110Profile, 9}, {recoveredProfile, 7},
+	} {
+		t.Run(tc.profile.id, func(t *testing.T) {
+			a := New()
+			a.format = tc.profile
+			for _, path := range []string{"etc/itemdropinfo_monster_hell.etc", "etc/itemdropinfo_monseter.etc"} {
+				hell := strings.Contains(path, "monster_hell")
+				var values []string
+				for i := 1; i <= tc.width*2; i++ {
+					values = append(values, strconv.Itoa(i))
+				}
+				input := "[basis of rarity dicision]\n"
+				if hell {
+					input += "2\n"
+				}
+				input += strings.Join(values, " ") + "\n[next]\n99"
+				raw, err := a.encodeScript(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rendered := a.decodeScriptForPath(raw, path)
+				want := "[basis of rarity dicision]\n"
+				if hell {
+					want += "\t2\n"
+				}
+				for group := 0; group < 2; group++ {
+					want += "\t" + strings.Join(values[group*tc.width:(group+1)*tc.width], "\t") + "\n"
+				}
+				want += "\n[next]\n\t99"
+				if rendered != want {
+					t.Fatalf("%s: rendered %q, want %q", path, rendered, want)
+				}
+				back, err := a.encodeScript(rendered)
+				if err != nil || !bytes.Equal(raw, back) {
+					t.Fatal("rendering changed tokens")
+				}
+			}
+		})
+	}
+}
+
+func TestDropRateRenderingRealArchiveRows(t *testing.T) {
+	path := os.Getenv("PVF_TESTFILE")
+	if path == "" {
+		t.Skip("PVF_TESTFILE not set")
+	}
+	a, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Release()
+	widths := map[string]int{"90US": 7, "90CN": 7, "TW": 6, "100CN": 8, "110US": 9}
+	width, ok := widths[a.ClientVersion()]
+	if !ok {
+		t.Skip("known drop-rate client required")
+	}
+	for _, spec := range []struct {
+		path           string
+		groups, offset int
+	}{
+		{"etc/itemdropinfo_monster_hell.etc", 2, 1}, {"etc/itemdropinfo_clearreward.etc", 1, 0},
+		{"etc/itemdropinfo_monseter.etc", 4, 0}, {"etc/itemdropinfo_monseter_extra.etc", 4, 0},
+	} {
+		index, ok := a.Find(spec.path)
+		if !ok {
+			t.Fatal("drop file missing")
+		}
+		text, err := a.Text(index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(text, "\n")
+		inside := false
+		rows := 0
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "[basis of rarity dicision]" {
+				inside = true
+				continue
+			}
+			if !inside {
+				continue
+			}
+			if strings.HasPrefix(line, "[") {
+				break
+			}
+			if line == "" {
+				continue
+			}
+			want := width
+			if rows < spec.offset {
+				want = 1
+			}
+			if count := len(strings.Fields(line)); count != want {
+				t.Fatalf("%s %s row %d width=%d want=%d", a.ClientVersion(), spec.path, rows, count, want)
+			}
+			rows++
+		}
+		if rows != spec.groups+spec.offset {
+			t.Fatalf("%s unexpected row count=%d", spec.path, rows)
+		}
+		raw, err := a.RawBytes(index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		back, err := a.encodeScript(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Legacy archives can have duplicate string-table entries: re-encoding
+		// may choose an equivalent offset, so compare the numeric drop section.
+		originalDoc, err := a.ParseScriptDocument(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		renderedDoc, err := a.ParseScriptDocument(back)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalSection, ok := originalDoc.Section([]string{"basis of rarity dicision"}, 0)
+		if !ok {
+			t.Fatal("original drop section missing")
+		}
+		renderedSection, ok := renderedDoc.Section([]string{"basis of rarity dicision"}, 0)
+		if !ok {
+			t.Fatal("rendered drop section missing")
+		}
+		originalValues, renderedValues := originalSection.Values(), renderedSection.Values()
+		if len(originalValues) != len(renderedValues) {
+			t.Fatal("rendered drop section length changed")
+		}
+		for i, value := range originalValues {
+			if value.Type != renderedValues[i].Type || value.Value != renderedValues[i].Value {
+				t.Fatalf("%s drop value %d changed after rendering", spec.path, i)
+			}
+		}
+	}
 }

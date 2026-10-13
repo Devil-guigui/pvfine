@@ -39,6 +39,8 @@ type FormatSpec struct {
 	// fallback when TokensPerLineIndex is configured but its value is missing
 	// or invalid.
 	TokensPerLine int `json:"tokensPerLine"`
+	// TokensPerLineByVersion overrides the fallback width for known clients.
+	TokensPerLineByVersion map[string]int `json:"tokensPerLineByVersion,omitempty"`
 	// TokensPerLineIndex is a zero-based direct token index inside a section;
 	// its positive integer value overrides TokensPerLine for that section.
 	TokensPerLineIndex *int `json:"tokensPerLineIndex,omitempty"`
@@ -47,4 +49,12 @@ type FormatSpec struct {
 	StandaloneValues []int32 `json:"standaloneValues,omitempty"`
 	// NestedSections are paired child sections which preserve an unpaired parent.
 	NestedSections []string `json:"nestedSections,omitempty"`
+}
+
+// ForVersion resolves the configured width before any token-index override.
+func (f FormatSpec) ForVersion(version string) FormatSpec {
+	if width := f.TokensPerLineByVersion[version]; width > 0 {
+		f.TokensPerLine = width
+	}
+	return f
 }

@@ -14,13 +14,15 @@ const (
 	dropRateSectionName     = "basis of rarity dicision"
 	dropRateGroupSize       = 7
 	dropRateLegacyGroupSize = 6
+	dropRate100CNGroupSize  = 8
+	dropRate110USGroupSize  = 9
 	dropRateValueCount      = 5
 	dropRateTotal           = 10000 // 百分比的百分之一: 100.00% == 10000
 	dropRateRawPerUnit      = 100   // PVF 原始刻度: 0.01% == 100
 )
 
 var (
-	ErrDropRateUnsupported = errors.New("基础掉率编辑器仅支持 90US/90CN/TW PVF")
+	ErrDropRateUnsupported = errors.New("基础掉率编辑器仅支持 90US/90CN/TW/110US/100CN PVF")
 	ErrDropRateStale       = errors.New("掉率数据已过期,请重新加载")
 )
 
@@ -77,7 +79,7 @@ type DropService struct{ c *core }
 
 func NewDropService(c *core) *DropService { return &DropService{c: c} }
 
-// Read returns the current drop-rate snapshot for the opened 90US/90CN/TW PVF.
+// Read returns the current drop-rate snapshot for the opened 90US/90CN/TW/110US/100CN PVF.
 func (s *DropService) Read() (*DropRateDocument, error) {
 	s.c.mu.RLock()
 	defer s.c.mu.RUnlock()
@@ -215,7 +217,7 @@ type dropRateReplacement struct {
 }
 
 func supportedDropRateVersion(version string) bool {
-	return version == "90US" || version == "90CN" || version == "TW"
+	return version == "90US" || version == "90CN" || version == "TW" || version == "110US" || version == "100CN"
 }
 
 func readDropRateDocument(a *pvf.Archive) (*DropRateDocument, error) {
@@ -389,8 +391,8 @@ func scriptIntegerValues(values []pvf.ScriptValue, path string) ([]int64, error)
 }
 
 // decodeDropRateGroup accepts the legacy six-value group. The sixth value is
-// intentionally ignored by the five-rarity algorithm; 90-series files add a
-// seventh value, which is kept outside this compatibility slice as well.
+// intentionally kept unchanged by the five-rarity editor; newer revisions
+// append more thresholds, which are also retained without reinterpretation.
 func decodeDropRateGroup(group []int64) ([]int, error) {
 	if len(group) < 6 {
 		return nil, fmt.Errorf("分组至少需要 6 个值")
@@ -454,13 +456,13 @@ func validateDropRates(rates []int) error {
 	return nil
 }
 
-// TW uses six values per group; 90-series files carry an additional value.
+// Known group widths: TW=6, 90US/90CN=7, 100CN=8, 110US=9.
 // Validate each section's exact layout before interpreting or changing it.
 func dropRateGroupWidth(values []int64, spec dropRateFileSpec) (int, error) {
-	for _, width := range []int{dropRateLegacyGroupSize, dropRateGroupSize} {
+	for _, width := range []int{dropRateLegacyGroupSize, dropRateGroupSize, dropRate100CNGroupSize, dropRate110USGroupSize} {
 		if len(values) == spec.offset+spec.groupCount*width {
 			return width, nil
 		}
 	}
-	return 0, fmt.Errorf("掉率文件 %s 的 section 数据长度为 %d,需要 %d 或 %d", spec.path, len(values), spec.offset+spec.groupCount*dropRateLegacyGroupSize, spec.offset+spec.groupCount*dropRateGroupSize)
+	return 0, fmt.Errorf("掉率文件 %s 的 section 数据长度为 %d,需要 %d、%d、%d 或 %d", spec.path, len(values), spec.offset+spec.groupCount*dropRateLegacyGroupSize, spec.offset+spec.groupCount*dropRateGroupSize, spec.offset+spec.groupCount*dropRate100CNGroupSize, spec.offset+spec.groupCount*dropRate110USGroupSize)
 }

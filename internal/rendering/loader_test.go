@@ -109,3 +109,24 @@ func TestParseRejectsTrailingJSON(t *testing.T) {
 		t.Fatalf("Parse() error = %v", err)
 	}
 }
+
+func TestVersionWidthsValidateAndClone(t *testing.T) {
+	for _, spec := range []string{`{"TW":0}`, `{"unknown":6}`, `{"":6}`} {
+		raw := `{"version":1,"rules":[{"id":"width","match":{},"target":{"kind":"section","section":"records"},"format":{"tokensPerLine":7,"tokensPerLineByVersion":` + spec + `}}]}`
+		if _, err := Parse([]byte(raw)); err == nil {
+			t.Fatal("accepted invalid version widths", spec)
+		}
+	}
+	engine, err := Parse([]byte(`{"version":1,"rules":[{"id":"width","match":{},"target":{"kind":"section","section":"records"},"format":{"tokensPerLine":7,"tokensPerLineByVersion":{"TW":6,"110US":9,"100CN":8}}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := engine.Document()
+	document.Rules[0].Format.TokensPerLineByVersion["TW"] = 99
+	if got := engine.SectionFormat("etc/test.etc", "records").ForVersion("TW").TokensPerLine; got != 6 {
+		t.Fatal("document mutation changed engine", got)
+	}
+	if got := engine.SectionFormat("etc/test.etc", "records").ForVersion("unknown").TokensPerLine; got != 7 {
+		t.Fatal("unknown version did not use fallback", got)
+	}
+}
