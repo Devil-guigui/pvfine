@@ -15,6 +15,13 @@ import { hasLongLine } from "../editorWrapping";
 export type EditorPaneId = string;
 export type SplitOrientation = "columns" | "rows";
 
+export interface ArchiveSaveProgress {
+  phase: string;
+  done: number;
+  total: number;
+  unit: string;
+}
+
 export interface EditorTab {
   index: number;
   path: string;
@@ -100,6 +107,19 @@ export const useEditorStore = defineStore("editor", () => {
     )?.id ?? null
   );
   const saving = ref(false);
+  const archiveSaveStage = ref<"preparing" | "saving" | "saveAs" | "finishing" | null>(null);
+  const archiveSaveProgress = ref<ArchiveSaveProgress | null>(null);
+  Events.On("archive:save-progress", (event: any) => {
+    if (archiveSaveStage.value !== "saving" && archiveSaveStage.value !== "saveAs") return;
+    const data = event?.data ?? event;
+    if (typeof data?.phase !== "string" || !Number.isFinite(data.done) || !Number.isFinite(data.total)) return;
+    archiveSaveProgress.value = {
+      phase: data.phase,
+      done: Math.max(0, data.done),
+      total: Math.max(0, data.total),
+      unit: data.unit ?? "",
+    };
+  });
   const guiApplying = ref(false);
   const guiRefreshWarning = ref("");
   const script = useScriptStore();
@@ -866,15 +886,21 @@ export const useEditorStore = defineStore("editor", () => {
 
   /** 保存到源文件 */
   async function save() {
+    if (saving.value) throw new Error("正在保存，请稍后再试");
     const archive = useArchiveStore();
     const guiDirtyTab = allFiles.value.find((tab) => tab.editable && hasGUIDirty(tab.index));
     if (guiDirtyTab) {
       throw new Error(`文件 ${guiDirtyTab.title || guiDirtyTab.path} 存在未应用的界面修改，请先在界面中点击【应用修改】后再保存`);
     }
     saving.value = true;
+    archiveSaveStage.value = "preparing";
+    archiveSaveProgress.value = null;
     try {
+      await nextTick();
       await saveAllDirty();
+      archiveSaveStage.value = "saving";
       const info = await EditorService.Save();
+      archiveSaveStage.value = "finishing";
       archive.info = info;
       // 保存成功后,文本与基准重置(overlay 已清空)
       for (const tab of allFiles.value) {
@@ -883,22 +909,30 @@ export const useEditorStore = defineStore("editor", () => {
       }
       return info;
     } finally {
+      archiveSaveStage.value = null;
+      archiveSaveProgress.value = null;
       saving.value = false;
     }
   }
 
   /** 另存为新 PVF,返回保存路径(取消返回 null) */
   async function saveAs() {
+    if (saving.value) throw new Error("正在保存，请稍后再试");
     const archive = useArchiveStore();
     const guiDirtyTab = allFiles.value.find((tab) => tab.editable && hasGUIDirty(tab.index));
     if (guiDirtyTab) {
       throw new Error(`文件 ${guiDirtyTab.title || guiDirtyTab.path} 存在未应用的界面修改，请先在界面中点击【应用修改】后再保存`);
     }
     saving.value = true;
+    archiveSaveStage.value = "preparing";
+    archiveSaveProgress.value = null;
     try {
+      await nextTick();
       await saveAllDirty();
+      archiveSaveStage.value = "saveAs";
       const path = await EditorService.SaveAsDialog();
       if (path) {
+        archiveSaveStage.value = "finishing";
         for (const tab of allFiles.value) {
           tab.original = tab.text;
           tab.modified = false;
@@ -907,6 +941,8 @@ export const useEditorStore = defineStore("editor", () => {
       }
       return path || null;
     } finally {
+      archiveSaveStage.value = null;
+      archiveSaveProgress.value = null;
       saving.value = false;
     }
   }
@@ -1185,6 +1221,8 @@ export const useEditorStore = defineStore("editor", () => {
     opening: computed(() => tabs.value.some((tab) => tab.loading)),
     openingPaneId,
     saving,
+    archiveSaveStage,
+    archiveSaveProgress,
     guiApplying,
     guiRefreshWarning,
     applyShopEdit,

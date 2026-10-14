@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from "vue";
 import { Events } from "@wailsio/runtime";
-import { useDialog } from "naive-ui";
+import { useDialog, useMessage } from "naive-ui";
+import { useEditorStore } from "../stores/editor";
 import { useAutosaveStore } from "../stores/autosave";
 import { hasUnsavedWorkspaceChanges } from "../unsaved";
 
 type CloseAction = "close" | "quit";
 
 const dialog = useDialog();
+const message = useMessage();
+const editor = useEditorStore();
 const autosave = useAutosaveStore();
 const pendingAction = ref<CloseAction | null>(null);
 const closing = ref(false);
@@ -19,6 +22,10 @@ function eventData(event: any): any {
 }
 
 function requestClose(action: CloseAction): void {
+  if (editor.archiveSaveStage) {
+    message.warning("归档正在保存，请等待保存完成后再退出");
+    return;
+  }
   if (pendingAction.value || closing.value) return;
   pendingAction.value = action;
 

@@ -26,6 +26,7 @@ import SettingsModal from "./components/SettingsModal.vue";
 import CloseGuard from "./components/CloseGuard.vue";
 import EditorCloseGuard from "./components/EditorCloseGuard.vue";
 import RecoveryPrompt from "./components/RecoveryPrompt.vue";
+import ArchiveSaveFeedback from "./components/ArchiveSaveFeedback.vue";
 import { useArchiveStore } from "./stores/archive";
 import { useAutosaveStore } from "./stores/autosave";
 import { useEditorStore } from "./stores/editor";
@@ -116,6 +117,10 @@ function onSystemThemeChange(event: MediaQueryListEvent): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
+  if (editor.archiveSaveStage) {
+    e.preventDefault();
+    return;
+  }
   const overlayOpen = settings.visible || advancedSearch.visible || version.visible ||
     !!document.querySelector(".n-modal-mask, .n-dialog-mask") ||
     (e.target instanceof Element && !!e.target.closest(".n-modal, .n-dialog, [role='dialog']"));
@@ -172,7 +177,9 @@ function executeShortcut(command: ShortcutCommandId): void {
       break;
     case "archive.saveAs":
       if (archive.open) {
-        editor.saveAs().catch((err: any) => {
+        editor.saveAs().then((path) => {
+          if (path) messageApi?.success(`已另存为 ${path}`);
+        }).catch((err: any) => {
           const msg = String(err?.message ?? err);
           if (!msg.includes("cancel")) {
             messageApi?.error(err?.message ?? msg);
@@ -252,6 +259,7 @@ function executeShortcut(command: ShortcutCommandId): void {
           </div>
           <StatusBar />
         </div>
+        <ArchiveSaveFeedback />
       </NDialogProvider>
     </NMessageProvider>
   </NConfigProvider>

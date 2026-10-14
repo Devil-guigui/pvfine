@@ -308,8 +308,12 @@ func (a *Archive) twChunk(ci int32) ([]byte, error) {
 // saveTW copies unchanged ciphertext, encrypts changed files, and appends
 // stringtable entries without renumbering any original string index.
 func (a *Archive) saveTW(w io.Writer) error {
+	return a.saveTWWithProgress(w, nil)
+}
+
+func (a *Archive) saveTWWithProgress(w io.Writer, progress SaveProgressFunc) error {
 	if !a.Modified() {
-		return a.writeContainer(w, a.data)
+		return a.writeContainerWithProgress(w, a.data, progress)
 	}
 	tableIndex, ok := a.Find("stringtable.bin")
 	if !ok {
@@ -345,6 +349,9 @@ func (a *Archive) saveTW(w io.Writer) error {
 		}
 	}
 	entries := make([]twEntry, len(a.items))
+	total := int64(len(a.items) - 1)
+	var processed int64
+	reportSaveProgress(progress, "packing", 0, total, "files")
 	for i, it := range a.items {
 		if int32(i) == tableIndex {
 			continue
@@ -382,7 +389,10 @@ func (a *Archive) saveTW(w io.Writer) error {
 		e.offset = uint32(body.Len())
 		body.Write(encrypted)
 		entries[i] = e
+		processed++
+		reportSaveProgress(progress, "packing", processed, total, "files")
 	}
+	reportSaveProgress(progress, "metadata", 0, 0, "")
 	table := tw.stringTable
 	if len(added) > 0 {
 		count := len(tw.strings)
@@ -447,7 +457,7 @@ func (a *Archive) saveTW(w io.Writer) error {
 		}
 		next.items[i].identity = item.identity
 	}
-	if err := a.writeContainer(w, packed); err != nil {
+	if err := a.writeContainerWithProgress(w, packed, progress); err != nil {
 		return err
 	}
 	a.data, a.hdr, a.tw = next.data, next.hdr, next.tw

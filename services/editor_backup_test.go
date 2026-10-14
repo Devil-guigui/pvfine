@@ -94,3 +94,32 @@ func TestEditorServiceSaveCanDisableSourceBackup(t *testing.T) {
 		t.Fatalf("source backup exists or stat failed: %v", err)
 	}
 }
+
+func TestBackupSourceProgressCountsBytes(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.pvf")
+	original := bytes.Repeat([]byte("backup data"), 300000)
+	if err := os.WriteFile(sourcePath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var lastCount int64
+	var synced bool
+	if err := backupSourceFileWithProgress(sourcePath, func(p pvf.SaveProgress) {
+		if p.Phase == "backup" {
+			if p.Total != int64(len(original)) || p.Done < lastCount || p.Done > p.Total {
+				t.Fatalf("invalid backup progress: %+v", p)
+			}
+			lastCount = p.Done
+		} else if p.Phase == "backup-sync" {
+			if lastCount != int64(len(original)) {
+				t.Fatal("sync preceded full copy")
+			}
+			synced = true
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.ReadFile(sourcePath + ".bak")
+	if err != nil || !bytes.Equal(backup, original) || !synced {
+		t.Fatal("backup progress changed backup content or omitted sync")
+	}
+}

@@ -232,6 +232,7 @@ func (s *EditorService) SetPlaceholderText(index int32, tableIndex int32, key st
 
 // Save 把全部内存修改写回源文件(原子写:临时文件 + rename)。
 func (s *EditorService) Save() (ArchiveInfo, error) {
+	progress := archiveSaveProgressEmitter()
 	s.c.mu.Lock()
 	a := s.c.archive
 	if a == nil {
@@ -247,12 +248,12 @@ func (s *EditorService) Save() (ArchiveInfo, error) {
 		return ArchiveInfo{}, fmt.Errorf("归档没有源文件,请使用另存为")
 	}
 	if s.shouldBackupSource() {
-		if err := backupSourceFile(a.SourcePath()); err != nil {
+		if err := backupSourceFileWithProgress(a.SourcePath(), progress); err != nil {
 			s.c.mu.Unlock()
 			return ArchiveInfo{}, err
 		}
 	}
-	if err := a.Save(); err != nil {
+	if err := a.SaveWithProgress(progress); err != nil {
 		s.c.mu.Unlock()
 		return ArchiveInfo{}, err
 	}
@@ -293,6 +294,38 @@ func (s *EditorService) shouldBackupSource() bool {
 }
 
 func backupSourceFile(sourcePath string) error {
+	return backupSourceFileWithProgress(sourcePath, nil)
+}
+
+// Progress events are throttled per operation; phase transitions and the final
+// count always arrive, without flooding the webview for every page or chunk.
+func archiveSaveProgressEmitter() pvf.SaveProgressFunc {
+	var lastPhase string
+	var lastEmit time.Time
+	return func(progress pvf.SaveProgress) {
+		now := time.Now()
+		complete := progress.Total > 0 && progress.Done >= progress.Total
+		if progress.Phase != lastPhase || complete || now.Sub(lastEmit) >= 100*time.Millisecond {
+			emitEvent("archive:save-progress", progress)
+			lastPhase, lastEmit = progress.Phase, now
+		}
+	}
+}
+
+type backupProgressWriter struct {
+	writer      io.Writer
+	done, total int64
+	progress    pvf.SaveProgressFunc
+}
+
+func (w *backupProgressWriter) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	w.done += int64(n)
+	w.progress(pvf.SaveProgress{Phase: "backup", Done: w.done, Total: w.total, Unit: "bytes"})
+	return n, err
+}
+
+func backupSourceFileWithProgress(sourcePath string, progress pvf.SaveProgressFunc) error {
 	source, err := os.Open(sourcePath)
 	if err != nil {
 		return fmt.Errorf("打开源文件以创建备份失败: %w", err)
@@ -320,9 +353,17 @@ func backupSourceFile(sourcePath string) error {
 		_ = temp.Close()
 		return fmt.Errorf("设置源文件备份权限失败: %w", err)
 	}
-	if _, err := io.CopyBuffer(temp, source, make([]byte, 1<<20)); err != nil {
+	var destination io.Writer = temp
+	if progress != nil {
+		progress(pvf.SaveProgress{Phase: "backup", Total: info.Size(), Unit: "bytes"})
+		destination = &backupProgressWriter{writer: temp, total: info.Size(), progress: progress}
+	}
+	if _, err := io.CopyBuffer(destination, source, make([]byte, 1<<20)); err != nil {
 		_ = temp.Close()
 		return fmt.Errorf("写入源文件备份失败: %w", err)
+	}
+	if progress != nil {
+		progress(pvf.SaveProgress{Phase: "backup-sync"})
 	}
 	if err := temp.Sync(); err != nil {
 		_ = temp.Close()
@@ -363,6 +404,7 @@ func (s *EditorService) SaveAsDialog() (string, error) {
 	if path == "" {
 		return "", nil // 用户取消
 	}
+	progress := archiveSaveProgressEmitter()
 	s.c.mu.Lock()
 	if s.c.archive != a {
 		s.c.mu.Unlock()
@@ -373,7 +415,7 @@ func (s *EditorService) SaveAsDialog() (string, error) {
 		return "", err
 	}
 	sourcePath := a.SourcePath()
-	if err := a.SaveAs(path); err != nil {
+	if err := a.SaveAsWithProgress(path, progress); err != nil {
 		s.c.mu.Unlock()
 		return "", err
 	}

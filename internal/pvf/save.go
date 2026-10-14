@@ -24,14 +24,38 @@ var ErrPagedCapacity = errors.New("pvf: 编辑后归档超出配套页表容量�
 // The write is atomic: data lands in a temp file that is renamed over path,
 // so a failed write never destroys an existing archive.
 func (a *Archive) SaveAs(path string) error {
+	return a.SaveAsWithProgress(path, nil)
+}
+
+// SaveProgress reports completed work in the current phase, not an estimated
+// percentage of the entire save. Total is zero for indeterminate phases.
+type SaveProgress struct {
+	Phase string `json:"phase"`
+	Done  int64  `json:"done"`
+	Total int64  `json:"total"`
+	Unit  string `json:"unit"`
+}
+
+type SaveProgressFunc func(SaveProgress)
+
+func reportSaveProgress(progress SaveProgressFunc, phase string, done, total int64, unit string) {
+	if progress != nil {
+		progress(SaveProgress{Phase: phase, Done: done, Total: total, Unit: unit})
+	}
+}
+
+// SaveAsWithProgress preserves the atomic save behavior and reports completion
+// only after the temporary file has been synced and renamed successfully.
+func (a *Archive) SaveAsWithProgress(path string, progress SaveProgressFunc) error {
 	tmp := path + ".pvftmp"
 	f, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
 	bw := bufio.NewWriterSize(f, 1<<20)
-	err = a.SaveTo(bw)
+	err = a.SaveToWithProgress(bw, progress)
 	if err == nil {
+		reportSaveProgress(progress, "syncing", 0, 0, "")
 		err = bw.Flush()
 	}
 	if err == nil {
@@ -44,6 +68,7 @@ func (a *Archive) SaveAs(path string) error {
 		os.Remove(tmp)
 		return err
 	}
+	reportSaveProgress(progress, "replacing", 0, 0, "")
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
 		return err
@@ -51,15 +76,20 @@ func (a *Archive) SaveAs(path string) error {
 	if a.sourcePath == "" {
 		a.sourcePath = path
 	}
+	reportSaveProgress(progress, "done", 1, 1, "")
 	return nil
 }
 
 // Save writes the archive back to the file it was opened from.
 func (a *Archive) Save() error {
+	return a.SaveWithProgress(nil)
+}
+
+func (a *Archive) SaveWithProgress(progress SaveProgressFunc) error {
 	if a.sourcePath == "" {
 		return errors.New("pvf: archive has no source path")
 	}
-	return a.SaveAs(a.sourcePath)
+	return a.SaveAsWithProgress(a.sourcePath, progress)
 }
 
 // SourcePath returns the file the archive was opened from ("" for archives
@@ -157,8 +187,15 @@ func sanitizeName(name string) string {
 // sections. A Paged110 container gets its page guards re-encrypted on the way
 // out, so the result is a file the client accepts.
 func (a *Archive) SaveTo(w io.Writer) error {
+	return a.SaveToWithProgress(w, nil)
+}
+
+// SaveToWithProgress reports reconstruction and output work. File durability
+// is reported separately by SaveAsWithProgress after this method returns.
+func (a *Archive) SaveToWithProgress(w io.Writer, progress SaveProgressFunc) error {
+	reportSaveProgress(progress, "preparing", 0, 0, "")
 	if a.tw != nil {
-		return a.saveTW(w)
+		return a.saveTWWithProgress(w, progress)
 	}
 	if err := a.validateWrite(); err != nil {
 		return err
@@ -177,13 +214,13 @@ func (a *Archive) SaveTo(w io.Writer) error {
 	logical := a.data
 	rebuilt := a.Modified() || logical == nil || int32(len(a.items)) != a.hdr.FileCount
 	if rebuilt {
-		out, err := a.rebuild()
+		out, err := a.rebuildWithProgress(progress)
 		if err != nil {
 			return err
 		}
 		logical = out
 	}
-	if err := a.writeContainer(w, logical); err != nil {
+	if err := a.writeContainerWithProgress(w, logical, progress); err != nil {
 		return err
 	}
 	if rebuilt {
@@ -195,6 +232,14 @@ func (a *Archive) SaveTo(w io.Writer) error {
 // writeContainer owns only the physical wrapping of logical archive bytes.
 // Shared reconstruction and write validation stay in SaveTo.
 func (a *Archive) writeContainer(w io.Writer, logical []byte) error {
+	return a.writeContainerWithProgress(w, logical, nil)
+}
+
+func (a *Archive) writeContainerWithProgress(w io.Writer, logical []byte, progress SaveProgressFunc) error {
+	if progress != nil {
+		reportSaveProgress(progress, "writing", 0, int64(len(logical)), "bytes")
+		w = &saveProgressWriter{writer: w, total: int64(len(logical)), progress: progress}
+	}
 	if a.format.container == pagedContainer {
 		return writePageGuarded(w, logical, a.pageKeys)
 	}
@@ -203,6 +248,32 @@ func (a *Archive) writeContainer(w io.Writer, logical []byte) error {
 		return io.ErrShortWrite
 	}
 	return err
+}
+
+// Split large writes so plain containers also produce incremental byte counts.
+type saveProgressWriter struct {
+	writer      io.Writer
+	done, total int64
+	progress    SaveProgressFunc
+}
+
+func (w *saveProgressWriter) Write(p []byte) (int, error) {
+	written := 0
+	for len(p) > 0 {
+		size := min(len(p), 1<<20)
+		n, err := w.writer.Write(p[:size])
+		written += n
+		w.done += int64(n)
+		reportSaveProgress(w.progress, "writing", w.done, w.total, "bytes")
+		if err != nil {
+			return written, err
+		}
+		if n != size {
+			return written, io.ErrShortWrite
+		}
+		p = p[size:]
+	}
+	return written, nil
 }
 
 type chunkOut struct {
@@ -214,6 +285,10 @@ type chunkOut struct {
 
 // rebuild produces the complete archive bytes with edits applied.
 func (a *Archive) rebuild() (result []byte, err error) {
+	return a.rebuildWithProgress(nil)
+}
+
+func (a *Archive) rebuildWithProgress(progress SaveProgressFunc) (result []byte, err error) {
 	// Classify edits.
 	modifiedChunks := map[int32]bool{}
 	var newFiles []int32
@@ -249,6 +324,11 @@ func (a *Archive) rebuild() (result []byte, err error) {
 	// Pass 1: per-chunk output. Untouched chunks are copied as raw encrypted
 	// bytes; modified chunks are rebuilt, re-compressed and re-encrypted.
 	outs := make([]chunkOut, 0, len(a.groups)+1)
+	totalChunks := int64(len(a.groups))
+	if len(newFiles) > 0 {
+		totalChunks++
+	}
+	reportSaveProgress(progress, "packing", 0, totalChunks, "chunks")
 	var cumulative int32
 	for ci := int32(0); ci < int32(len(a.groups)); ci++ {
 		if !modifiedChunks[ci] {
@@ -258,6 +338,7 @@ func (a *Archive) rebuild() (result []byte, err error) {
 			}
 			cumulative += int32(len(raw))
 			outs = append(outs, chunkOut{raw: raw, origSize: a.groups[ci].origSize, compSize: cumulative})
+			reportSaveProgress(progress, "packing", int64(ci)+1, totalChunks, "chunks")
 			continue
 		}
 		rebuilt, err := a.rebuildChunk(ci)
@@ -271,6 +352,7 @@ func (a *Archive) rebuild() (result []byte, err error) {
 		cryptSeed(a.keys.body.seed, a.keys.body.magic, enc)
 		cumulative += int32(len(enc))
 		outs = append(outs, chunkOut{enc: enc, origSize: int32(len(rebuilt)), compSize: cumulative})
+		reportSaveProgress(progress, "packing", int64(ci)+1, totalChunks, "chunks")
 	}
 
 	// New files land in one appended chunk.
@@ -292,7 +374,10 @@ func (a *Archive) rebuild() (result []byte, err error) {
 		cryptSeed(a.keys.body.seed, a.keys.body.magic, enc)
 		cumulative += int32(len(enc))
 		outs = append(outs, chunkOut{enc: enc, origSize: int32(nb.Len()), compSize: cumulative})
+		reportSaveProgress(progress, "packing", totalChunks, totalChunks, "chunks")
 	}
+
+	reportSaveProgress(progress, "metadata", 0, 0, "")
 
 	// File table (plaintext).
 	table := make([]byte, len(a.items)*0x18)
