@@ -825,6 +825,13 @@ export const useEditorStore = defineStore("editor", () => {
     return index === null ? false : saveFileTab(index);
   }
 
+  /** 捕获只读对比草稿，不应用表单、不改变脏基线。 */
+  function archiveDiffDrafts() {
+    const pending = allFiles.value.find(tab => hasGUIDirty(tab.index));
+    if (pending) throw new Error(`文件 ${pending.title || pending.path} 存在未应用的界面修改，请先点击【应用修改】后再比较`);
+    return allFiles.value.filter(isTextDirty).map(tab => ({ fileIndex: tab.index, path: tab.path, text: tab.text }));
+  }
+
   /** 把所有本地有修改的标签写入 overlay(PVF 写盘前调用)。 */
   async function saveAllDirty(): Promise<number> {
     const indexes = allFiles.value.filter((tab) => isTextDirty(tab)).map((tab) => tab.index);
@@ -1215,6 +1222,7 @@ export const useEditorStore = defineStore("editor", () => {
     setPlaceholderText,
     saveTab,
     saveFileTab,
+    archiveDiffDrafts,
     openUpgrade,
     openForge,
     saveActiveTab,

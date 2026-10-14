@@ -76,6 +76,7 @@ type pathEntry struct {
 // core owns the loaded archive plus derived indexes. Guarded by mu; all
 // services take it per call.
 type core struct {
+	archiveDiff         *ArchiveDiffService
 	ruleMu              sync.Mutex
 	ruleStore           *ruleconfig.Store
 	ruleWarnings        []string
@@ -368,6 +369,9 @@ func (c *core) installDiskArchiveIndexesLocked(a *pvf.Archive) {
 	c.markAdvancedSearchStaleLocked(a)
 	c.indexGen++
 	c.archiveGeneration++
+	if c.archiveDiff != nil && c.archive != a {
+		c.archiveDiff.Release()
+	}
 	c.batchRevision++
 	c.batchPlan = nil
 	c.invalidateScriptLocked()
@@ -452,6 +456,9 @@ func (c *core) replaceArchivePayloadLocked(a *pvf.Archive, changedIndexes map[in
 	c.batchPlan = nil
 	c.invalidateScriptLocked()
 	c.bindRenderingEngineLocked(a)
+	if c.archiveDiff != nil && c.archive != a {
+		c.archiveDiff.Release()
+	}
 	c.archive = a
 	previousAnnotations := c.annotationEngine
 	c.annotationEngine = c.annotationEngine.ForVersion(a.ClientVersion())
@@ -623,6 +630,9 @@ func (c *core) installArchiveIndexesLockedWithSearch(a *pvf.Archive, children ma
 	c.markAdvancedSearchStaleLocked(a)
 	c.indexGen++
 	c.archiveGeneration++
+	if c.archiveDiff != nil && c.archive != a {
+		c.archiveDiff.Release()
+	}
 	c.batchRevision++
 	c.batchPlan = nil
 	c.invalidateScriptLocked()
@@ -718,6 +728,9 @@ func (c *core) closeArchive() {
 	advancedDisk = c.detachAdvancedSearchLocked()
 	c.indexGen++
 	c.archiveGeneration++
+	if c.archiveDiff != nil {
+		c.archiveDiff.Release()
+	}
 	c.batchRevision++
 	c.batchPlan = nil
 	c.invalidateScriptLocked()

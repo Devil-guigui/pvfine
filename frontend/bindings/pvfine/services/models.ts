@@ -121,6 +121,55 @@ export interface AppSettings {
     "maxEditableSizeMB": number;
 }
 
+export interface ArchiveDiffDraft {
+    "fileIndex": number;
+    "path": string;
+    "text": string;
+}
+
+export interface ArchiveDiffFile {
+    "path": string;
+    "operation": string;
+    "beforeHash": string;
+    "afterHash": string;
+    "beforeType": number;
+    "afterType": number;
+    "beforeSize": number;
+    "afterSize": number;
+    "beforeExists": boolean;
+    "afterExists": boolean;
+    "beforeText": string;
+    "afterText": string;
+    "textAvailable": boolean;
+    "message": string;
+}
+
+export interface ArchiveDiffNode {
+    "path": string;
+    "name": string;
+    "isDir": boolean;
+    "operation": string;
+    "count": number;
+}
+
+export interface ArchiveDiffRequest {
+    "path": string;
+    "drafts": ArchiveDiffDraft[] | null;
+}
+
+export interface ArchiveDiffStatus {
+    "id": string;
+    "state": string;
+    "currentPath": string;
+    "otherPath": string;
+    "processed": number;
+    "total": number;
+    "added": number;
+    "modified": number;
+    "deleted": number;
+    "error": string;
+}
+
 /**
  * ArchiveInfo 是前端可观察的归档状态快照。
  */

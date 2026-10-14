@@ -35,6 +35,7 @@ import { useAdvancedSearchStore } from "../stores/advancedSearch";
 import { useFileSetStore } from "../stores/fileSets";
 import { useSettingsStore } from "../stores/settings";
 import { useImportStore } from "../stores/import";
+import { useArchiveDiffStore } from "../stores/archiveDiff";
 import { useVersionStore } from "../stores/version";
 import { useScriptStore } from "../stores/script";
 import { useDropRateStore } from "../stores/dropRate";
@@ -49,6 +50,7 @@ const fileSets = useFileSetStore();
 const settings = useSettingsStore();
 const importer = useImportStore();
 const version = useVersionStore();
+const archiveDiff = useArchiveDiffStore();
 const script = useScriptStore();
 const dropRate = useDropRateStore();
 const message = useMessage();
@@ -135,6 +137,12 @@ const toolOptions = computed(() => [
       { label: "增幅概率", key: "amplify-upgrade", disabled: !archive.open },
       { label: "锻造配置", key: "forge", disabled: !archive.open },
     ],
+  },
+  {
+    label: "归档对比",
+    key: "archive-diff",
+    disabled: !archive.open || archive.loading,
+    icon: () => h(NIcon, null, { default: () => h(DocumentSync24Regular) }),
   },
 ]);
 watch(
@@ -264,6 +272,7 @@ function onCancelUnpack() {
 }
 
 async function onToolSelect(key: string): Promise<void> {
+  if (key === "archive-diff") { archiveDiff.open(); return; }
   if (key === "forge") {
     if (!archive.open) { message.warning("需先打开 PVF 归档"); return; }
     try { await editor.openForge(); }
