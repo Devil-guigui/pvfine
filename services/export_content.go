@@ -108,6 +108,9 @@ func (s *ExportService) exportSourceLocked(r ExportRequest) (*exportSource, []ex
 	a := s.c.archive
 	source := &exportSource{archive: a}
 	changes := []exportChange{}
+	if r.Source == "archive-diff" {
+		return s.archiveDiffExportSource(r)
+	}
 	if r.Source == "memory" {
 		for index := int32(0); index < a.FileCount(); index++ {
 			if !a.IsModified(index) {

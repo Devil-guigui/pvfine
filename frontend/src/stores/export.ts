@@ -6,7 +6,7 @@ import type { ExportPreview, ExportRequest } from "../../bindings/pvfine/service
 import type { Descriptor } from "../../bindings/pvfine/internal/mod/models";
 import { exportFileKey } from "../utils/export-tree";
 
-export type ExportSource = Pick<ExportRequest, "source" | "scopes" | "commitId">;
+export type ExportSource = Pick<ExportRequest, "source" | "scopes" | "commitId" | "diffId" | "reverse">;
 
 export function modNameError(name: string): string {
   if (!name || name !== name.trim() || /^[._]/.test(name)) return "名称不能为空、包含首尾空格或以 . / _ 开头";
@@ -160,6 +160,8 @@ export const useExportStore = defineStore("export", () => {
   }
 
   function invalidate(force = false): void {
+    // Archive comparisons export a fixed snapshot, including captured drafts.
+    if (!force && source.value?.source === "archive-diff") return;
     if (!visible.value || (running.value && !force)) return;
     generation++;
     releasePreview();
@@ -184,7 +186,7 @@ export const useExportStore = defineStore("export", () => {
   Events.On("archive:opened", close);
   Events.On("archive:closed", close);
   Events.On("archive:changed", () => invalidate());
-  Events.On("archive:reloaded", () => invalidate());
+  Events.On("archive:reloaded", () => invalidate(source.value?.source === "archive-diff"));
   Events.On("version:changed", () => invalidate());
   Events.On("version:committed", () => invalidate());
   return {

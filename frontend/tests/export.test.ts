@@ -259,3 +259,15 @@ test("移除补齐依赖更新统计，必需文件始终勾选", async () => {
   await store.execute();
   expect(mocks.ExecuteSelectionDialog).toHaveBeenCalledWith("mod", ["merge/a.str"]);
 });
+
+test("归档差异传递快照和方向，普通编辑不使固定快照失效，重载使其失效", async () => {
+  const store = useExportStore();
+  void store.open({ ...source, source: "archive-diff", diffId: "comparison-1", reverse: true }, "导出差异");
+  await settle();
+  expect(mocks.Prepare.mock.lastCall?.[0]).toMatchObject({ source: "archive-diff", diffId: "comparison-1", reverse: true });
+  mocks.events.get("archive:changed")?.();
+  mocks.events.get("version:changed")?.();
+  expect(store.canExport).toBe(true);
+  mocks.events.get("archive:reloaded")?.();
+  expect(store.canExport).toBe(false);
+});

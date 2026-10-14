@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { Folder20Regular } from "@vicons/fluent";
 import { computed, h } from "vue";
-import { NAlert, NButton, NEmpty, NModal, NProgress, NSpin, NTree, type TreeOption } from "naive-ui";
+import { NAlert, NButton, NEmpty, NModal, NProgress, NSpin, NTree, useMessage, type TreeOption } from "naive-ui";
 import { useArchiveDiffStore, type DiffTreeNode } from "../stores/archiveDiff";
+import { useSettingsStore } from "../stores/settings";
+import { useExportStore } from "../stores/export";
 import { archiveName, diffOperation } from "../archiveDiff";
 import { computeDiffLines } from "../textDiff";
 import UnifiedDiff from "./UnifiedDiff.vue";
 
 const diff = useArchiveDiffStore();
+const settings = useSettingsStore();
+const exporter = useExportStore();
+const message = useMessage();
+const handledClickEvents = new WeakSet<MouseEvent>();
+const directoryToggleKeys = new Set<string>();
 const oldPath = computed(() => diff.reverse ? diff.status?.currentPath : diff.status?.otherPath);
 const newPath = computed(() => diff.reverse ? diff.status?.otherPath : diff.status?.currentPath);
 const operationLabels: Record<string, string> = { add: "新增", modify: "变更", delete: "删除" };
@@ -26,6 +33,17 @@ const progressLabel = computed(() => {
   const label = labels[state ?? "loading"] ?? "正在处理";
   return diff.status?.total && !diff.rootLoading ? `${label} ${diff.status.processed.toLocaleString()} / ${diff.status.total.toLocaleString()}` : `${label}…`;
 });
+async function exportDiff() {
+  const status = diff.status;
+  if (!status || status.state !== "ready" || diff.busy) return;
+  try {
+    const path = await exporter.open({ source: "archive-diff", scopes: [], commitId: "", diffId: status.id, reverse: diff.reverse },
+      `导出差异（${archiveName(oldPath.value || "")} → ${archiveName(newPath.value || "")}）`);
+    if (path) message.success(`已导出差异到 ${path}`);
+  } catch (error: any) {
+    message.error(`导出差异失败: ${error?.message ?? error}`);
+  }
+}
 function renderLabel({ option }: { option: TreeOption }) {
   const node = (option as DiffTreeNode).node;
   const op = diffOperation(node.operation, diff.reverse);
@@ -35,17 +53,38 @@ function renderLabel({ option }: { option: TreeOption }) {
     node.isDir ? h("span", { class: "tree-count" }, String(node.count)) : null,
   ]);
 }
+async function openNode(option: TreeOption) {
+  const node = (option as DiffTreeNode).node;
+  if (!node.isDir) { await diff.openFile(node); return; }
+  const key = String(option.key);
+  if (directoryToggleKeys.has(key)) return;
+  directoryToggleKeys.add(key);
+  try {
+    const id = diff.status?.id;
+    await diff.loadChildren(option);
+    if (!id || diff.status?.id !== id) return;
+    diff.expandedKeys = diff.expandedKeys.includes(key)
+      ? diff.expandedKeys.filter(item => item !== key) : [...diff.expandedKeys, key];
+  } finally { directoryToggleKeys.delete(key); }
+}
+function isTreeControl(event: MouseEvent) {
+  return event.target instanceof Element && !!event.target.closest("[data-switcher], [data-checkbox]");
+}
 function nodeProps({ option }: { option: TreeOption }) {
   const node = (option as DiffTreeNode).node;
   return {
-    onDblclick: async () => {
-      if (!node.isDir) { await diff.openFile(node); return; }
-      const id = diff.status?.id;
-      await diff.loadChildren(option);
-      if (!id || diff.status?.id !== id) return;
-      const key = String(option.key);
-      diff.expandedKeys = diff.expandedKeys.includes(key)
-        ? diff.expandedKeys.filter(item => item !== key) : [...diff.expandedKeys, key];
+    onClick: (event: MouseEvent) => {
+      // NTree block-line can invoke this handler twice for the same event.
+      if (handledClickEvents.has(event)) return;
+      handledClickEvents.add(event);
+      if (isTreeControl(event) || settings.explorerOpenMode !== "single-click") return;
+      event.stopPropagation();
+      void openNode(option);
+    },
+    onDblclick: (event: MouseEvent) => {
+      if (isTreeControl(event) || settings.explorerOpenMode !== "double-click") return;
+      event.stopPropagation();
+      void openNode(option);
     },
     onKeydown: (event: KeyboardEvent) => {
       if (event.key === "Enter" && !node.isDir) { event.preventDefault(); void diff.openFile(node); }
@@ -63,6 +102,7 @@ function nodeProps({ option }: { option: TreeOption }) {
         <NButton :disabled="!diff.status || diff.status.state !== 'ready'" @click="diff.reverse = !diff.reverse">切换方向</NButton>
         <NButton :disabled="!diff.otherPath || diff.busy || diff.selecting" @click="diff.refresh">刷新</NButton>
         <NButton v-if="diff.busy" :disabled="diff.starting" @click="diff.cancel">取消比较</NButton>
+        <NButton :disabled="diff.busy || diff.status?.state !== 'ready' || !diff.tree.length || exporter.visible" @click="exportDiff">导出差异</NButton>
       </div>
       <div v-if="diff.status" class="compare-direction">
         <span :title="oldPath"><small>基准{{ diff.reverse ? '（当前归档）' : '（另一份归档）' }}</small>{{ archiveName(oldPath || '') }}</span>

@@ -448,6 +448,8 @@ export interface ExportPreviewFile {
 
 export interface ExportRequest {
     "source": string;
+    "diffId"?: string;
+    "reverse"?: boolean;
     "scopes": string[] | null;
     "commitId": string;
     "mode": string;

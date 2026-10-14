@@ -23,6 +23,8 @@ var exportSequence atomic.Uint64
 
 type ExportRequest struct {
 	Source              string   `json:"source"`
+	DiffID              string   `json:"diffId,omitempty"`
+	Reverse             bool     `json:"reverse,omitempty"`
 	Scopes              []string `json:"scopes"`
 	CommitID            string   `json:"commitId"`
 	Mode                string   `json:"mode"`
@@ -251,13 +253,16 @@ func (s *ExportService) Prepare(request ExportRequest) (result *ExportPreview, r
 	if p.preview.FileCount == 0 {
 		return nil, errors.New("没有可导出的文件或可应用的 mod 内容")
 	}
+	if request.Source == "archive-diff" && !s.validLocked(p) {
+		return nil, ErrExportStale
+	}
 	s.storePlan(p)
 	preview := p.preview
 	return &preview, nil
 }
 
 func sameExportContentRequest(a, b ExportRequest) bool {
-	return a.Source == b.Source && a.CommitID == b.CommitID && a.Mode == b.Mode &&
+	return a.Source == b.Source && a.CommitID == b.CommitID && a.DiffID == b.DiffID && a.Reverse == b.Reverse && a.Mode == b.Mode &&
 		a.Format == b.Format && a.IncludeDependencies == b.IncludeDependencies &&
 		slices.Equal(a.Scopes, b.Scopes)
 }
@@ -286,6 +291,16 @@ func (s *ExportService) Release(id string) {
 }
 
 func (s *ExportService) validLocked(p *exportPlan) bool {
+	if p != nil && p.request.Source == "archive-diff" {
+		if time.Since(p.created) >= 10*time.Minute || p.archive != s.c.archive || p.generation != s.c.archiveGeneration || s.c.archiveDiff == nil {
+			return false
+		}
+		diff := s.c.archiveDiff
+		diff.mu.Lock()
+		defer diff.mu.Unlock()
+		_, err := diff.findLocked(p.request.DiffID, true)
+		return err == nil
+	}
 	return p != nil && time.Since(p.created) < 10*time.Minute &&
 		p.archive == s.c.archive && p.repo == s.c.versionRepo &&
 		p.revision == s.c.batchRevision && p.generation == s.c.archiveGeneration &&
