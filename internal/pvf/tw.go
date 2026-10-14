@@ -457,6 +457,7 @@ func (a *Archive) saveTW(w io.Writer) error {
 	a.strA, a.strW = next.strA, next.strW
 	a.strAIdx, a.strWIdx = nil, nil
 	a.pathIndex = next.pathIndex
+	a.compactPaths = next.compactPaths
 	a.resolveCache = next.resolveCache
 	a.resolveCacheOrder = nil
 	a.resolveCacheBytes = 0

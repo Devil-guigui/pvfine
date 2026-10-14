@@ -113,3 +113,30 @@ func zlibDecompress(data []byte) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// zlibDecompressSized avoids ReadAll's growing buffers for pools whose
+// inflated length is declared in the container. Reading past the expected
+// length also validates the stream checksum and rejects oversized output.
+func zlibDecompressSized(data []byte, size int) ([]byte, error) {
+	if size < 0 {
+		return nil, fmt.Errorf("%w: negative inflated size", ErrInvalidSection)
+	}
+	zr, err := zlib.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer zr.Close()
+	out := make([]byte, size)
+	if _, err := io.ReadFull(zr, out); err != nil {
+		return nil, err
+	}
+	var extra [1]byte
+	n, err := io.ReadFull(zr, extra[:])
+	if n != 0 {
+		return nil, fmt.Errorf("%w: inflated length exceeds declaration", ErrInvalidSection)
+	}
+	if err != io.EOF {
+		return nil, err
+	}
+	return out, nil
+}

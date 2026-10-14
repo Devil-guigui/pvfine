@@ -12,6 +12,7 @@ func (a *Archive) Release() int64 {
 	a.cacheMu.Lock()
 	released := int64(len(a.data) + len(a.pageKeys) + len(a.items)*24 + len(a.groups)*8)
 	released += int64(len(a.strA) + len(a.strW))
+	released += int64(len(a.compactPaths) * 8)
 	if a.tw != nil {
 		released += int64(len(a.tw.entries)*48 + len(a.tw.strings)*4 + len(a.tw.stringTable) + len(a.tw.directory))
 	}
@@ -40,6 +41,7 @@ func (a *Archive) Release() int64 {
 	a.chunkCacheClock = 0
 	a.overlay = nil
 	a.pathIndex = nil
+	a.compactPaths = nil
 	a.removedSpans = nil
 	a.sourcePath = ""
 	a.cacheMu.Unlock()

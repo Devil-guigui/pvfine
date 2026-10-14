@@ -117,7 +117,8 @@ type Archive struct {
 	chunkCacheClock   uint64
 	overlay           map[int32][]byte // index -> replacement payload
 	pathIndex         map[string]int32
-	structuralDirty   bool // file entries were added or removed since the last save
+	compactPaths      []uint64 // immutable sorted fingerprints for large archives
+	structuralDirty   bool     // file entries were added or removed since the last save
 	removedSpans      map[int32][]removedFileSpan
 	mutations         []FileMutation // effective changes since the last checkpoint
 
@@ -245,7 +246,7 @@ func OpenWithSidecars(path, sidecarDir string) (*Archive, error) {
 	if sidecarDir == "" {
 		sidecarDir = filepath.Dir(path)
 	}
-	a, err := parse(data, sidecarDir)
+	a, err := parseOwned(data, sidecarDir, true)
 	if err != nil {
 		return nil, err
 	}
@@ -261,10 +262,14 @@ func Parse(data []byte) (*Archive, error) {
 }
 
 func parse(data []byte, sidecarDir string) (*Archive, error) {
+	return parseOwned(data, sidecarDir, false)
+}
+
+func parseOwned(data []byte, sidecarDir string, owned bool) (*Archive, error) {
 	if isTW(data) {
 		return parseTW(data)
 	}
-	detected, err := detectArchive(data, sidecarDir)
+	detected, err := detectArchive(data, sidecarDir, owned)
 	if err != nil {
 		return nil, err
 	}
@@ -377,12 +382,7 @@ func parseDetected(detected detectedArchive) (*Archive, error) {
 	}
 
 	// Path index (case-insensitive, mirrors the reference GM tool).
-	for i := range a.items {
-		p := normalizePath(a.Path(int32(i)))
-		if _, exists := a.pathIndex[p]; !exists {
-			a.pathIndex[p] = int32(i)
-		}
-	}
+	a.rebuildPathIndex()
 	return a, nil
 }
 
@@ -488,8 +488,7 @@ func (a *Archive) Path(i int32) string { return a.FullPath(i) }
 
 // Find looks up an entry by "dir/name" path (case-insensitive).
 func (a *Archive) Find(path string) (int32, bool) {
-	i, ok := a.pathIndex[normalizePath(path)]
-	return i, ok
+	return a.findNormalizedPath(normalizePath(path))
 }
 
 // FindList looks up a `.lst` index across client layouts. The 90US clients keep

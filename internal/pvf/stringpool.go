@@ -47,7 +47,7 @@ func (a *Archive) parseNameTable(nb []byte) error {
 		copy(enc, nb[idx:idx+int(encSize)])
 		idx += int(encSize)
 		cryptSeed(sec.key.seed, sec.key.magic, enc)
-		raw, err := zlibDecompress(enc)
+		raw, err := zlibDecompressSized(enc, rawLen)
 		if err != nil {
 			// Non-standard seed: the pool is a zlib stream, so its header gives
 			// two known plaintext bytes and rawLen pins the inflated length.
@@ -58,7 +58,7 @@ func (a *Archive) parseNameTable(nb []byte) error {
 				return fmt.Errorf("%w: name pool %d cannot be decoded", ErrInvalidSection, poolIndex)
 			}
 			cryptSeed(recovered.seed, recovered.magic, enc2)
-			raw, err = zlibDecompress(enc2)
+			raw, err = zlibDecompressSized(enc2, rawLen)
 			if err != nil {
 				return fmt.Errorf("%w: name pool %d decompression failed", ErrInvalidSection, poolIndex)
 			}

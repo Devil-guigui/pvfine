@@ -169,7 +169,7 @@ func (a *Archive) SetText(i int32, text string) error {
 // valid immediately and the data is stored to its own chunk at save time.
 func (a *Archive) AddFile(relPath string, data []byte, dataType int32) int32 {
 	normalized := normalizePath(relPath)
-	if i, ok := a.pathIndex[normalized]; ok {
+	if i, ok := a.findNormalizedPath(normalized); ok {
 		_ = a.SetRawBytes(i, data)
 		return i
 	}
@@ -219,7 +219,6 @@ func (a *Archive) RemoveFiles(indexes []int32) ([]string, error) {
 	paths := make([]string, 0, len(removed))
 	nextItems := make([]fileItem, 0, len(a.items)-len(removed))
 	nextOverlay := make(map[int32][]byte, len(a.overlay))
-	nextPathIndex := make(map[string]int32, len(a.pathIndex))
 	nextRemovedSpans := cloneRemovedSpans(a.removedSpans)
 	for oldIndex, item := range a.items {
 		index := int32(oldIndex)
@@ -241,15 +240,11 @@ func (a *Archive) RemoveFiles(indexes []int32) ([]string, error) {
 		if payload, ok := a.overlay[index]; ok {
 			nextOverlay[newIndex] = payload
 		}
-		path := normalizePath(a.Path(index))
-		if _, exists := nextPathIndex[path]; !exists {
-			nextPathIndex[path] = newIndex
-		}
 	}
 
 	a.items = nextItems
 	a.overlay = nextOverlay
-	a.pathIndex = nextPathIndex
+	a.rebuildPathIndex()
 	a.resolveCache = make(map[int32]string)
 	a.resolveCacheOrder = nil
 	a.resolveCacheBytes = 0

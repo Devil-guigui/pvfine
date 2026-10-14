@@ -63,6 +63,19 @@ func TestPagedExecutableKeyFallback(t *testing.T) {
 	}
 	prefix := len(wrapped) &^ (paged110MetadataAlign - 1)
 	cipher.NewCBCEncrypter(block, make([]byte, aes.BlockSize)).CryptBlocks(wrapped[:prefix], wrapped[:prefix])
+	for _, owned := range []bool{false, true} {
+		input := bytes.Clone(packed.Bytes())
+		logical, _, _, ok := decryptPagedWithOwnership(input, wrapped, paged110Keys(), metadata, owned)
+		if !ok || (len(logical) > 0 && (&logical[0] == &input[0]) != owned) {
+			t.Fatalf("paged buffer ownership failed: owned=%t", owned)
+		}
+		if !owned && !bytes.Equal(input, packed.Bytes()) {
+			t.Fatal("paged parsing changed caller bytes")
+		}
+		if err := writePageGuarded(&bytes.Buffer{}, logical, chain); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var sealed []byte
 	for off := 0; off < len(wrapped); off += 117 {
 		end := off + 117

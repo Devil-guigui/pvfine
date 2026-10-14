@@ -311,15 +311,16 @@ func isHexDigit(c byte) bool {
 
 // unlockPaged tries complete bundled clients first, then archive-local sidecars.
 // Client identity is accepted only after the decrypted header and layout validate.
-// data is never modified; the bundled fast path does not read sibling files.
-func unlockPaged(data []byte, dir string) (detectedArchive, bool) {
+// Caller data is preserved unless owned; the bundled fast path does not read
+// sibling files. An owned buffer is only modified after successful validation.
+func unlockPaged(data []byte, dir string, owned bool) (detectedArchive, bool) {
 	if len(data) < paged110PageGuardSize {
 		return detectedArchive{}, false
 	}
 	keys := paged110Keys()
 	clients := bundledPagedClients()
 	for _, client := range clients {
-		if result, ok := openPagedTable(data, client.table, keys, client.metadata, client.profile); ok {
+		if result, ok := openPagedTable(data, client.table, keys, client.metadata, client.profile, owned); ok {
 			return result, true
 		}
 	}
@@ -331,7 +332,7 @@ func unlockPaged(data []byte, dir string) (detectedArchive, bool) {
 			if err != nil {
 				continue
 			}
-			if result, ok := openPagedTable(data, table, keys, client.metadata, client.profile); ok {
+			if result, ok := openPagedTable(data, table, keys, client.metadata, client.profile, owned); ok {
 				return result, true
 			}
 			tables = append(tables, pageKeyTable{data: table, profile: client.profile})
@@ -352,7 +353,7 @@ func unlockPaged(data []byte, dir string) (detectedArchive, bool) {
 		clientCandidates := pagedMetadataCandidates(exe)
 		for _, table := range clientTables {
 			for _, cand := range clientCandidates {
-				if result, ok := openPagedTable(data, table.data, keys, cand, table.profile); ok {
+				if result, ok := openPagedTable(data, table.data, keys, cand, table.profile, owned); ok {
 					return result, true
 				}
 			}
@@ -361,8 +362,8 @@ func unlockPaged(data []byte, dir string) (detectedArchive, bool) {
 	return detectedArchive{}, false
 }
 
-func openPagedTable(data, table []byte, keys keySet, metadata []byte, profile formatProfile) (detectedArchive, bool) {
-	dec, pkeys, hdr, ok := decryptPagedWith(data, table, keys, metadata)
+func openPagedTable(data, table []byte, keys keySet, metadata []byte, profile formatProfile, owned bool) (detectedArchive, bool) {
+	dec, pkeys, hdr, ok := decryptPagedWithOwnership(data, table, keys, metadata, owned)
 	if !ok {
 		return detectedArchive{}, false
 	}
@@ -373,6 +374,10 @@ func openPagedTable(data, table []byte, keys keySet, metadata []byte, profile fo
 // then validates, returns the archive with its page guards decrypted together
 // with the unwrapped page key table needed to write it back.
 func decryptPagedWith(data, table []byte, keys keySet, cand []byte) ([]byte, []byte, Header, bool) {
+	return decryptPagedWithOwnership(data, table, keys, cand, false)
+}
+
+func decryptPagedWithOwnership(data, table []byte, keys keySet, cand []byte, owned bool) ([]byte, []byte, Header, bool) {
 	pages := (len(data) + paged110PageSize - 1) / paged110PageSize
 	if len(data) < paged110PageGuardSize || len(table)%paged110PageKeySize != 0 ||
 		len(table)/paged110PageKeySize < pages {
@@ -403,8 +408,12 @@ func decryptPagedWith(data, table []byte, keys keySet, cand []byte) ([]byte, []b
 	if declared != int64(len(data)) {
 		return nil, nil, Header{}, false
 	}
-	buf := make([]byte, len(data))
-	copy(buf, data)
+	// Open owns its os.ReadFile buffer; Parse must preserve caller bytes.
+	// Only reuse the buffer after the complete header and key capacity validate.
+	buf := data
+	if !owned {
+		buf = bytes.Clone(data)
+	}
 	if decryptPageGuards(buf, unwrapped) != pages {
 		return nil, nil, Header{}, false
 	}

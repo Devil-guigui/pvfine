@@ -15,7 +15,7 @@ type detectedArchive struct {
 
 // Probes are ordered from cheap known formats to container unlocking. Adding
 // a known format does not change the common parser or recovery algorithm.
-func detectArchive(data []byte, sidecarDir string) (detectedArchive, error) {
+func detectArchive(data []byte, sidecarDir string, owned bool) (detectedArchive, error) {
 	if len(data) < headerSize {
 		return detectedArchive{}, ErrTruncated
 	}
@@ -24,7 +24,7 @@ func detectArchive(data []byte, sidecarDir string) (detectedArchive, error) {
 			return result, nil
 		}
 	}
-	if result, ok := unlockPaged(data, sidecarDir); ok {
+	if result, ok := unlockPaged(data, sidecarDir, owned); ok {
 		return result, nil
 	}
 	// Recovery remains available even if unrelated sidecar files are present.

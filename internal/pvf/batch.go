@@ -755,6 +755,7 @@ func (a *Archive) cloneForBatch() *Archive {
 		chunkCacheMeta:          make(map[int32]chunkCacheEntry),
 		overlay:                 cloneBytesMap(a.overlay),
 		pathIndex:               cloneInt32Map(a.pathIndex),
+		compactPaths:            a.compactPaths,
 		structuralDirty:         a.structuralDirty,
 		removedSpans:            cloneRemovedSpans(a.removedSpans),
 		scriptRenderer:          a.scriptRenderer,
