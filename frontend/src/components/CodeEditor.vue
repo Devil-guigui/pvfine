@@ -50,6 +50,7 @@ import { NDropdown, NTooltip } from "naive-ui";
 import { annotationAt, forEachVisibleAnnotation, indexAnnotations, referenceAt, type AnnotationRange } from "../editorAnnotations";
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
 import { luaLanguage } from "../luaLanguage";
+import { squirrelLanguage } from "../squirrelLanguage";
 import { pvfSectionFolding, sectionFoldTiming } from "../pvfSectionFolding";
 import { startDebugTiming } from "../stores/debugTiming";
 import { hasLongLine } from "../editorWrapping";
@@ -62,7 +63,7 @@ import type { ResolvedThemeId } from "../theme";
 const props = defineProps<{
   doc: string;
   ruleEditing?: boolean;
-  language?: "pvf" | "javascript" | "typescript" | "lua";
+  language?: "pvf" | "javascript" | "typescript" | "lua" | "squirrel";
   readOnly?: boolean;
   annotations?: EditorAnnotation[];
   tagPlacement?: AnnotationTagPlacement;
@@ -538,7 +539,8 @@ function createEditorTheme(themeId: ResolvedThemeId) {
 function makeExtensions(themeId: ResolvedThemeId) {
   const isJavaScript = props.language === "javascript" || props.language === "typescript";
   const isLua = props.language === "lua";
-  const isPvf = !isJavaScript && !isLua;
+  const isSquirrel = props.language === "squirrel";
+  const isPvf = !isJavaScript && !isLua && !isSquirrel;
   return [
     lineNumbers(),
     highlightActiveLineGutter(),
@@ -610,7 +612,8 @@ function makeExtensions(themeId: ResolvedThemeId) {
     indentUnit.of("\t"),
     isJavaScript
       ? javascript({ typescript: props.language === "typescript" })
-      : isLua ? luaLanguage.extension : pvfLanguage.extension,
+      : isLua ? luaLanguage.extension
+      : isSquirrel ? squirrelLanguage.extension : pvfLanguage.extension,
     ...(isPvf ? [
       foldGutter(),
       sectionFoldTiming.of((state) => startDebugTiming(
@@ -624,7 +627,7 @@ function makeExtensions(themeId: ResolvedThemeId) {
           scriptHighlighting,
           ...(props.readOnly ? [] : [autocompletion({ override: [scriptCompletionSource] })]),
         ]
-      : isLua ? scriptHighlighting : pvfHighlighting,
+      : isLua || isSquirrel ? scriptHighlighting : pvfHighlighting,
     editorThemeComp.of(createEditorTheme(themeId)),
     wrappingComp.of(wrapping ? EditorView.lineWrapping : []),
     EditorView.updateListener.of((u) => {
