@@ -1,13 +1,10 @@
 package services
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image/png"
 	"io/fs"
 	"os"
 	pathpkg "path"
@@ -110,6 +107,10 @@ type ImageService struct {
 	cache      map[string]imageCacheEntry
 	cacheOrder []string
 	cacheBytes int
+
+	// Shared by single-frame and batch requests; limits all active decoders.
+	decodeSlots chan struct{}
+	batchIO     imageBatchIO // optional IO overrides for deterministic tests
 }
 
 func NewImageService(_ *core, settings *SettingsService) *ImageService {
@@ -242,85 +243,14 @@ func (s *ImageService) IndexStatus() ImageIndexStatus {
 // frames intentionally return (nil, nil) so callers can render a fallback.
 func (s *ImageService) GetImage(path string, index int32) (*ImageData, error) {
 	defer debugPhase("GetImage", fmt.Sprintf("path=%s frame=%d", path, index))()
-	keyPath := normalizeImagePath(path)
-	if keyPath == "" || index < 0 {
-		return nil, nil
-	}
-	wait := time.Now()
-	s.mu.RLock()
-	debugLog("GetImage image-lock acquired wait=%.2fms", elapsedMilliseconds(wait))
-	snapshot := s.snapshot
-	generation := s.generation
-	if snapshot == nil || s.directory == "" {
-		debugLog("GetImage path=%s frame=%d index-unavailable", path, index)
-		s.mu.RUnlock()
-		return nil, nil
-	}
-	record := snapshot.byPath[keyPath]
-	if record == nil {
-		debugLog("GetImage path=%s frame=%d frame-unavailable", path, index)
-		s.mu.RUnlock()
-		return nil, nil
-	}
-	cacheKey := fmt.Sprintf("%d\x00%s\x00%d", generation, keyPath, index)
-	if cached, ok := s.cache[cacheKey]; ok {
-		debugLog("GetImage path=%s frame=%d cache=hit", path, index)
-		s.mu.RUnlock()
-		return &cached.data, nil
-	}
-	directory := snapshot.directory
-	npkPath := filepath.Join(directory, filepath.FromSlash(record.npkRelative))
-	if !isImagePathWithin(directory, npkPath) {
-		s.mu.RUnlock()
-		return nil, errors.New("NPK 索引路径越界")
-	}
-	npkOffset, npkSize := record.offset, record.size
-	s.mu.RUnlock()
-
-	finishDecode := debugPhase("GetImage.read-and-decode", fmt.Sprintf("path=%s frame=%d cache=miss", path, index))
-	file, err := os.Open(npkPath)
+	results, err := s.getImages([]ImageReference{{Path: path, Index: index}}, nil)
 	if err != nil {
-		finishDecode()
-		return nil, fmt.Errorf("读取 NPK 文件失败: %w", err)
+		return nil, err
 	}
-	img, err := npk.ParseIMGAt(file, npkOffset, npkSize)
-	if err != nil {
-		_ = file.Close()
-		finishDecode()
-		return nil, fmt.Errorf("读取 IMG 帧表失败: %w", err)
+	if results[0].Error != "" {
+		return nil, errors.New(results[0].Error)
 	}
-	if index >= int32(len(img.Images)) {
-		_ = file.Close()
-		finishDecode()
-		return nil, nil
-	}
-	decoded, err := npk.DecodeImage(file, npkOffset, npkSize, img, index)
-	_ = file.Close()
-	finishDecode()
-	if err != nil {
-		return nil, fmt.Errorf("解码 IMG 图片失败: %w", err)
-	}
-	var encoded bytes.Buffer
-	finishEncode := debugPhase("GetImage.png-encode", fmt.Sprintf("path=%s frame=%d", path, index))
-	if err := png.Encode(&encoded, decoded); err != nil {
-		finishEncode()
-		return nil, fmt.Errorf("编码 PNG 失败: %w", err)
-	}
-	finishEncode()
-	bounds := decoded.Bounds()
-	result := ImageData{
-		DataURL: "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes()),
-		Width:   int32(bounds.Dx()),
-		Height:  int32(bounds.Dy()),
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.generation != generation || s.snapshot != snapshot {
-		return nil, nil
-	}
-	s.putCacheLocked(cacheKey, result, encoded.Len())
-	return &result, nil
+	return results[0].Data, nil
 }
 
 func (s *ImageService) switchDirectory(directory string) {

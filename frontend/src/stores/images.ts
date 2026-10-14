@@ -2,11 +2,8 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { Events } from "@wailsio/runtime";
 import { ImageService } from "../../bindings/pvfine/services";
-import type {
-  ImageData,
-  ImageIndexStatus,
-  ImageReference,
-} from "../../bindings/pvfine/services/models";
+import { createImageLoader } from "../utils/image-loader";
+import type { ImageIndexStatus } from "../../bindings/pvfine/services/models";
 
 const idleStatus: ImageIndexStatus = {
   state: "idle",
@@ -27,8 +24,11 @@ const idleStatus: ImageIndexStatus = {
 export const useImageStore = defineStore("images", () => {
   const status = ref<ImageIndexStatus>({ ...idleStatus });
   const revision = ref(0);
-  const pending = new Map<string, Promise<ImageData | null>>();
-  const resolved = new Map<string, ImageData | null>();
+  const loader = createImageLoader(
+    () => status.value.generation,
+    async (references, generation) => (await ImageService.GetImages(references, generation)) ?? [],
+    (error) => console.warn("load PVF images failed", error),
+  );
   let initialized = false;
 
   function eventStatus(event: any): ImageIndexStatus | null {
@@ -40,15 +40,13 @@ export const useImageStore = defineStore("images", () => {
   function acceptStatus(next: ImageIndexStatus | null): void {
     if (!next) return;
     if (next.generation !== status.value.generation) {
-      pending.clear();
-      resolved.clear();
+      loader.reset();
       revision.value++;
     }
     status.value = next;
     if (next.state === "ready" || next.state === "error") {
       revision.value++;
-      pending.clear();
-      resolved.clear();
+      loader.reset();
     }
   }
 
@@ -76,33 +74,7 @@ export const useImageStore = defineStore("images", () => {
     return status.value;
   }
 
-  function loadImage(reference: ImageReference | null | undefined): Promise<ImageData | null> {
-    if (!reference || !reference.path || reference.index < 0) return Promise.resolve(null);
-    const key = `${status.value.generation}\u0000${normalizePath(reference.path)}\u0000${reference.index}`;
-    if (resolved.has(key)) return Promise.resolve(resolved.get(key) ?? null);
-    const existing = pending.get(key);
-    if (existing) return existing;
-    const generation = status.value.generation;
-    const request = ImageService.GetImage(reference.path, reference.index)
-      .then((data) => {
-        const result = data ?? null;
-        if (status.value.generation === generation) {
-          resolved.delete(key);
-          resolved.set(key, result);
-          while (resolved.size > 512) resolved.delete(resolved.keys().next().value!);
-        }
-        return result;
-      })
-      .catch((error) => {
-        console.warn("load PVF image failed", reference.path, reference.index, error);
-        return null;
-      })
-      .finally(() => {
-        if (pending.get(key) === request) pending.delete(key);
-      });
-    pending.set(key, request);
-    return request;
-  }
+  const loadImage = loader.load;
 
   Events.On("image:index-progress", (event: any) => acceptStatus(eventStatus(event)));
   Events.On("image:index-ready", (event: any) => acceptStatus(eventStatus(event)));
@@ -117,7 +89,3 @@ export const useImageStore = defineStore("images", () => {
     loadImage,
   };
 });
-
-function normalizePath(value: string): string {
-  return value.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "").toLowerCase();
-}

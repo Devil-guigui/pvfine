@@ -25,6 +25,15 @@ export function GetImage(path: string, index: number): $CancellablePromise<$mode
 }
 
 /**
+ * GetImages groups a small visible-image batch by NPK and IMG. It opens each
+ * package once and parses each requested member's frame table once. Generation
+ * prevents delayed frontend requests from reading a different resource set.
+ */
+export function GetImages(references: $models.ImageReference[] | null, generation: number): $CancellablePromise<$models.ImageBatchResult[] | null> {
+    return $Call.ByID(1007461974, references, generation);
+}
+
+/**
  * IndexStatus returns a copy of the current asynchronous scan state.
  */
 export function IndexStatus(): $CancellablePromise<$models.ImageIndexStatus> {

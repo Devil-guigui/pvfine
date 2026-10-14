@@ -521,6 +521,15 @@ export interface ForgeSection {
 }
 
 /**
+ * ImageBatchResult corresponds to the request at the same array position.
+ * A corrupt frame does not prevent other frames in the batch from loading.
+ */
+export interface ImageBatchResult {
+    "data": ImageData | null;
+    "error": string;
+}
+
+/**
  * ImageData is always a PNG data URL. The source NPK path is intentionally
  * never exposed to the frontend.
  */

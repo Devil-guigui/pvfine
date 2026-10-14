@@ -38,3 +38,10 @@ type ImageIndexStatus struct {
 	Generation      uint64  `json:"generation"`
 	BuildDurationMs float64 `json:"buildDurationMs"`
 }
+
+// ImageBatchResult corresponds to the request at the same array position.
+// A corrupt frame does not prevent other frames in the batch from loading.
+type ImageBatchResult struct {
+	Data  *ImageData `json:"data"`
+	Error string     `json:"error"`
+}

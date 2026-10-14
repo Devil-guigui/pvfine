@@ -95,6 +95,7 @@ export type {
     FileSetDocument,
     ForgeDocument,
     ForgeSection,
+    ImageBatchResult,
     ImageData,
     ImageIndexStatus,
     ImageReference,

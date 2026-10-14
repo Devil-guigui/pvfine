@@ -433,7 +433,7 @@ func (a *Archive) ScriptMetadata(i int32) (ScriptMetadata, error) {
 	}
 	type metadataSection struct {
 		name   string
-		paired bool
+		kind   string
 		depth  int
 		values []metadataToken
 	}
@@ -441,13 +441,26 @@ func (a *Archive) ScriptMetadata(i int32) (ScriptMetadata, error) {
 	// PVF scripts contain both paired sections and legacy, unpaired sections.
 	// First collect closing names so the stack follows the same semantic rule
 	// as decodeScript and ParseScriptView.
+	type sectionTag struct {
+		name           string
+		closing, valid bool
+	}
+	// Resolve each tag offset once per extraction. This remains local so edits,
+	// pool replacement and concurrent readers cannot observe stale tag identities.
+	tags := make(map[int32]sectionTag)
 	pairedNames := make(map[string]bool)
 	for pos := 0; pos < len(raw); pos += 5 {
 		if raw[pos] != 3 {
 			continue
 		}
-		if name, closing, ok := parseSectionTag(a.ResolveString(int32(binary.LittleEndian.Uint32(raw[pos+1:])))); ok && closing {
-			pairedNames[name] = true
+		offset := int32(binary.LittleEndian.Uint32(raw[pos+1:]))
+		tag, exists := tags[offset]
+		if !exists {
+			tag.name, tag.closing, tag.valid = parseSectionTag(a.ResolveString(offset))
+			tags[offset] = tag
+		}
+		if tag.valid && tag.closing {
+			pairedNames[tag.name] = true
 		}
 	}
 
@@ -461,8 +474,9 @@ func (a *Archive) ScriptMetadata(i int32) (ScriptMetadata, error) {
 		typ := raw[pos]
 		value := int32(binary.LittleEndian.Uint32(raw[pos+1:]))
 		if typ == 3 {
-			name, closing, ok := parseSectionTag(a.ResolveString(value))
-			if ok {
+			tag := tags[value]
+			name, closing := tag.name, tag.closing
+			if tag.valid {
 				depth := len(stack)
 				closeUnpaired(depth)
 				if closing {
@@ -475,7 +489,7 @@ func (a *Archive) ScriptMetadata(i int32) (ScriptMetadata, error) {
 					continue
 				}
 				sectionIndex := len(sections)
-				sections = append(sections, metadataSection{name: name, paired: pairedNames[name], depth: depth})
+				sections = append(sections, metadataSection{name: name, kind: strings.ToLower(strings.TrimSpace(name)), depth: depth})
 				if pairedNames[name] {
 					stack = append(stack, sectionIndex)
 				} else {
@@ -493,16 +507,55 @@ func (a *Archive) ScriptMetadata(i int32) (ScriptMetadata, error) {
 		if !ok {
 			continue
 		}
+		section := &sections[sectionIndex]
+		isString := typ == 3 || typ == 5 || typ == 6 || typ == 7 || typ == 8 || typ == 10
+		switch section.kind {
+		case "name":
+			if section.depth != 0 || len(section.values) != 0 || !isString {
+				continue
+			}
+		case "growtype name":
+			if section.depth != 0 || len(section.values) != 0 {
+				continue
+			}
+		case "rarity":
+			if len(section.values) != 0 {
+				continue
+			}
+		case "icon", "field image":
+			if len(section.values) == 2 {
+				continue // the first valid adjacent path/index pair is complete
+			}
+		default:
+			continue // no decoding or value allocation for unrelated sections
+		}
 		text := ""
-		if typ == 3 || typ == 5 || typ == 6 || typ == 7 || typ == 8 || typ == 10 {
+		if isString {
 			text = a.ResolveString(value)
 		}
-		sections[sectionIndex].values = append(sections[sectionIndex].values, metadataToken{typ: typ, value: value, text: text})
+		token := metadataToken{typ: typ, value: value, text: text}
+		switch section.kind {
+		case "name":
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+		case "icon", "field image":
+			if len(section.values) == 1 && strings.TrimSpace(section.values[0].text) != "" && typ == 0 && value >= 0 {
+				section.values = append(section.values, token)
+				continue
+			}
+			// Only the previous token can form a pair with the next one.
+			if len(section.values) != 0 {
+				section.values[0] = token
+				continue
+			}
+		}
+		section.values = append(section.values, token)
 	}
 
 	metadata := ScriptMetadata{}
 	for _, section := range sections {
-		name := strings.ToLower(strings.TrimSpace(section.name))
+		name := section.kind
 		switch name {
 		case "name":
 			// Entity names only come from top-level sections; a nested [name]
