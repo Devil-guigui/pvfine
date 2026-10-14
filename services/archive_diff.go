@@ -72,6 +72,8 @@ type archiveDiffSession struct {
 	current, other *pvf.Archive
 	changes        map[string]pvfversion.FileChange
 	children       map[string][]ArchiveDiffNode
+	detail         *ArchiveDiffFile
+	detailLimit    int32
 }
 
 var archiveDiffSequence atomic.Uint64
@@ -220,42 +222,53 @@ func (s *ArchiveDiffService) compare(ctx context.Context, p *archiveDiffSession,
 	progress := func(n int) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if s.session == p {
+		if s.session == p && p.status.State == "comparing" {
 			p.status.Processed = n
 		}
 	}
-	before, err := archiveDiffSnapshot(ctx, other, 0, progress)
+	phase := func(state string, n, total int) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.session == p && ctx.Err() == nil {
+			p.status.State, p.status.Processed, p.status.Total = state, n, total
+		}
+	}
+	changes, err := archiveDiffComparePhases(ctx, other, stage, progress, phase)
 	if err != nil {
 		fail(err)
 		return
 	}
-	after, err := archiveDiffSnapshot(ctx, stage, int(other.FileCount()), progress)
+	phase("building", 0, len(changes))
+	children, err := archiveDiffBuildChildren(ctx, changes, phase)
 	if err != nil {
 		fail(err)
 		return
 	}
-	changes := pvfversion.Diff(before, after)
-	children := archiveDiffChildren(changes)
+	changeIndex := make(map[string]pvfversion.FileChange, len(changes))
+	var added, deleted, modified int
+	for _, change := range changes {
+		if ctx.Err() != nil {
+			return
+		}
+		changeIndex[change.Path] = change
+		switch change.Operation {
+		case pvfversion.OperationAdd:
+			added++
+		case pvfversion.OperationDelete:
+			deleted++
+		default:
+			modified++
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.session != p || ctx.Err() != nil {
 		return
 	}
 	p.current, p.other = stage, other
-	p.children = children
-	p.changes = make(map[string]pvfversion.FileChange, len(changes))
-	for _, change := range changes {
-		p.changes[change.Path] = change
-		switch change.Operation {
-		case pvfversion.OperationAdd:
-			p.status.Added++
-		case pvfversion.OperationDelete:
-			p.status.Deleted++
-		default:
-			p.status.Modified++
-		}
-	}
-	p.status.Processed = total
+	p.children, p.changes = children, changeIndex
+	p.status.Added, p.status.Deleted, p.status.Modified = added, deleted, modified
+	p.status.Processed, p.status.Total = total, total
 	p.status.State = "ready"
 }
 
@@ -263,149 +276,6 @@ func (s *ArchiveDiffService) compare(ctx context.Context, p *archiveDiffSession,
 // workers than files. Do not cap CPU-bound comparison work at a fixed four.
 func archiveDiffWorkerCount(files int32) int {
 	return min(int(files), max(1, runtime.GOMAXPROCS(0)-1))
-}
-
-func archiveDiffSnapshot(ctx context.Context, a *pvf.Archive, offset int, progress func(int)) (pvfversion.Snapshot, error) {
-	return archiveDiffSnapshotWorkers(ctx, a, offset, progress, archiveDiffWorkerCount(a.FileCount()))
-}
-
-type archiveDiffHashResult struct {
-	key   string
-	entry pvfversion.Entry
-	err   error
-}
-
-func archiveDiffSnapshotWorkers(parent context.Context, a *pvf.Archive, offset int, progress func(int), workers int) (pvfversion.Snapshot, error) {
-	if err := parent.Err(); err != nil {
-		return nil, err
-	}
-	result := make(pvfversion.Snapshot, a.FileCount())
-	if a.FileCount() == 0 {
-		progress(offset)
-		return result, nil
-	}
-	workers = min(int(a.FileCount()), max(1, workers))
-	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
-	// Queue indexes rather than decoded payloads. Each worker retains only the
-	// file it is hashing; the bounded result queue contains compact hashes.
-	jobs := make(chan int32)
-	results := make(chan archiveDiffHashResult, workers)
-	largeFile := make(chan struct{}, 1)
-	var done sync.WaitGroup
-	done.Add(workers + 1)
-	go func() {
-		defer done.Done()
-		defer close(jobs)
-		for i := int32(0); i < a.FileCount(); i++ {
-			select {
-			case jobs <- i:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	for worker := 0; worker < workers; worker++ {
-		go func() {
-			defer done.Done()
-			for {
-				var index int32
-				var ok bool
-				select {
-				case <-ctx.Done():
-					return
-				case index, ok = <-jobs:
-					if !ok {
-						return
-					}
-				}
-				file := a.File(index)
-				// Large logical text expansion is the main transient memory risk. Allow
-				// at most one >=8 MiB payload to decode/hash at a time, independently of
-				// the CPU-based worker count used for ordinary files.
-				large := file.DataSize >= 8<<20
-				if large {
-					select {
-					case largeFile <- struct{}{}:
-					case <-ctx.Done():
-						return
-					}
-				}
-				value := archiveDiffHashFile(ctx, a, index, file)
-				if large {
-					<-largeFile
-				}
-				select {
-				case results <- value:
-				case <-ctx.Done():
-					return
-				}
-				if value.err != nil {
-					return
-				}
-			}
-		}()
-	}
-	go func() { done.Wait(); close(results) }()
-	processed := 0
-	var firstErr error
-	// One collector owns the map and progress updates, keeping progress ordered
-	// even when file computations finish out of order. Drain after cancellation
-	// so no producer or worker survives a released comparison task.
-	for value := range results {
-		if firstErr != nil || ctx.Err() != nil {
-			continue
-		}
-		if value.err != nil {
-			firstErr = value.err
-		} else if _, exists := result[value.key]; exists {
-			firstErr = fmt.Errorf("归档包含重复路径 %q，无法唯一比较", value.entry.Path)
-		}
-		if firstErr != nil {
-			cancel()
-			continue
-		}
-		result[value.key] = value.entry
-		processed++
-		if processed == 1 || processed%64 == 0 {
-			progress(offset + processed)
-		}
-	}
-	if firstErr != nil {
-		return nil, firstErr
-	}
-	if err := parent.Err(); err != nil {
-		return nil, err
-	}
-	progress(offset + processed)
-	return result, nil
-}
-
-func archiveDiffHashFile(ctx context.Context, a *pvf.Archive, index int32, file pvf.File) archiveDiffHashResult {
-	if err := ctx.Err(); err != nil {
-		return archiveDiffHashResult{err: err}
-	}
-	path := pvfversion.DisplayPath(a.Path(index))
-	key := pvfversion.CanonicalPath(path)
-	if key == "" {
-		return archiveDiffHashResult{err: fmt.Errorf("归档中存在空路径")}
-	}
-	var data []byte
-	var err error
-	if file.DataType == pvf.TypeScript || file.DataType == pvf.TypeUnicode {
-		var value string
-		value, err = a.CanonicalText(index)
-		data = []byte(value)
-	} else {
-		data, err = a.RawBytes(index)
-	}
-	if err != nil {
-		return archiveDiffHashResult{err: fmt.Errorf("读取 %s 失败: %w", path, err)}
-	}
-	if err := ctx.Err(); err != nil {
-		return archiveDiffHashResult{err: err}
-	}
-	return archiveDiffHashResult{key: key, entry: pvfversion.Entry{Path: path, DataType: file.DataType, Hash: archiveDiffContentHash(file.DataType, data)}}
 }
 
 // Hash the same type-prefixed logical bytes as version snapshots without
@@ -419,44 +289,100 @@ func archiveDiffContentHash(dataType int32, data []byte) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+// Retained as a convenient synchronous helper for tree tests.
 func archiveDiffChildren(changes []pvfversion.FileChange) map[string][]ArchiveDiffNode {
-	nodes := make(map[string]map[string]ArchiveDiffNode)
-	for _, change := range changes {
-		parts := strings.Split(change.DisplayPath, "/")
-		parent := ""
-		for i, name := range parts {
-			path := strings.Join(parts[:i+1], "/")
-			key := pvfversion.CanonicalPath(path)
-			if nodes[parent] == nil {
-				nodes[parent] = make(map[string]ArchiveDiffNode)
-			}
-			node := nodes[parent][key]
-			node.Path = path
-			node.Name = name
-			node.Count++
-			node.IsDir = i < len(parts)-1
-			if !node.IsDir {
-				node.Operation = string(change.Operation)
-			}
-			nodes[parent][key] = node
-			parent = key
-		}
-	}
-	result := make(map[string][]ArchiveDiffNode, len(nodes))
-	for parent, entries := range nodes {
-		list := make([]ArchiveDiffNode, 0, len(entries))
-		for _, node := range entries {
-			list = append(list, node)
-		}
-		sort.Slice(list, func(i, j int) bool {
-			if list[i].IsDir != list[j].IsDir {
-				return list[i].IsDir
-			}
-			return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
-		})
-		result[parent] = list
-	}
+	result, _ := archiveDiffBuildChildren(context.Background(), changes, nil)
 	return result
+}
+
+func archiveDiffBuildChildren(ctx context.Context, changes []pvfversion.FileChange, progress func(string, int, int)) (map[string][]ArchiveDiffNode, error) {
+	type treeEntry struct {
+		node ArchiveDiffNode
+		key  string
+	}
+	type directory struct {
+		entry    treeEntry
+		parent   *directory
+		children []*treeEntry
+	}
+	root := &directory{}
+	dirs := map[string]*directory{"": root}
+	var ensureDir func(string, string) *directory
+	ensureDir = func(key, display string) *directory {
+		if dir := dirs[key]; dir != nil {
+			return dir
+		}
+		parentKey, parentDisplay, name := "", "", display
+		if i := strings.LastIndexByte(key, '/'); i >= 0 {
+			parentKey = key[:i]
+		}
+		if i := strings.LastIndexByte(display, '/'); i >= 0 {
+			parentDisplay, name = display[:i], display[i+1:]
+		}
+		parent := ensureDir(parentKey, parentDisplay)
+		dir := &directory{entry: treeEntry{node: ArchiveDiffNode{Path: display, Name: name, IsDir: true}, key: key}, parent: parent}
+		dirs[key] = dir
+		parent.children = append(parent.children, &dir.entry)
+		return dir
+	}
+	// Directory identities and sort keys are computed once. Leaves append
+	// directly, avoiding a map entry and repeated normalization per ancestor.
+	for i, change := range changes {
+		if i%64 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if progress != nil {
+				progress("building", i, len(changes))
+			}
+		}
+		key := change.Path
+		display := pvfversion.DisplayPath(change.DisplayPath)
+		parentKey, parentDisplay, name := "", "", display
+		if i := strings.LastIndexByte(key, '/'); i >= 0 {
+			parentKey = key[:i]
+		}
+		if i := strings.LastIndexByte(display, '/'); i >= 0 {
+			parentDisplay, name = display[:i], display[i+1:]
+		}
+		dir := ensureDir(parentKey, parentDisplay)
+		dir.children = append(dir.children, &treeEntry{node: ArchiveDiffNode{Path: display, Name: name, Count: 1, Operation: string(change.Operation)}, key: key})
+		for ancestor := dir; ancestor != nil; ancestor = ancestor.parent {
+			ancestor.entry.node.Count++
+		}
+	}
+	if progress != nil {
+		progress("sorting-tree", 0, len(dirs))
+	}
+	result := make(map[string][]ArchiveDiffNode, len(dirs))
+	sorted := 0
+	for key, dir := range dirs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		sort.Slice(dir.children, func(i, j int) bool {
+			a, b := dir.children[i], dir.children[j]
+			if a.node.IsDir != b.node.IsDir {
+				return a.node.IsDir
+			}
+			return a.key < b.key
+		})
+		list := make([]ArchiveDiffNode, len(dir.children))
+		for i, entry := range dir.children {
+			list[i] = entry.node
+		}
+		if len(list) > 0 {
+			result[key] = list
+		}
+		sorted++
+		if progress != nil && sorted%64 == 0 {
+			progress("sorting-tree", sorted, len(dirs))
+		}
+	}
+	if progress != nil {
+		progress("sorting-tree", len(dirs), len(dirs))
+	}
+	return result, ctx.Err()
 }
 
 func (s *ArchiveDiffService) Children(id, path string) ([]ArchiveDiffNode, error) {
@@ -470,6 +396,7 @@ func (s *ArchiveDiffService) Children(id, path string) ([]ArchiveDiffNode, error
 }
 
 func (s *ArchiveDiffService) FileDiff(id, path string) (*ArchiveDiffFile, error) {
+	limit := s.c.editableByteLimit()
 	// Capture references under the session lock. Parsing/detail IO never holds
 	// it, so closing or cancelling remains responsive.
 	s.mu.Lock()
@@ -480,6 +407,11 @@ func (s *ArchiveDiffService) FileDiff(id, path string) (*ArchiveDiffFile, error)
 	}
 	change, ok := p.changes[pvfversion.CanonicalPath(path)]
 	before, after := p.other, p.current
+	if ok && p.detail != nil && p.detail.Path == change.DisplayPath && p.detailLimit == limit {
+		result := *p.detail
+		s.mu.Unlock()
+		return &result, nil
+	}
 	s.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("文件不在差异列表中")
@@ -489,36 +421,82 @@ func (s *ArchiveDiffService) FileDiff(id, path string) (*ArchiveDiffFile, error)
 	ai, aok := after.Find(change.Path)
 	result.BeforeExists, result.AfterExists = bok, aok
 	if bok {
-		result.BeforeSize = before.File(bi).DataSize
+		_, result.BeforeSize, _ = before.FileContentInfo(bi)
 	}
 	if aok {
-		result.AfterSize = after.File(ai).DataSize
+		_, result.AfterSize, _ = after.FileContentInfo(ai)
 	}
 	isText := func(typ int32) bool { return typ == pvf.TypeScript || typ == pvf.TypeUnicode }
-	if (bok && !isText(result.BeforeType)) || (aok && !isText(result.AfterType)) {
+	mixed := (bok && !isText(result.BeforeType)) || (aok && !isText(result.AfterType))
+	large := result.BeforeSize > limit || result.AfterSize > limit
+	wantText := !mixed && !large
+	if bok {
+		result.BeforeText, result.BeforeHash, err = archiveDiffDetailSide(before, bi, result.BeforeHash, limit, wantText)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if aok {
+		result.AfterText, result.AfterHash, err = archiveDiffDetailSide(after, ai, result.AfterHash, limit, wantText)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if mixed {
 		result.Message = "二进制内容不同，不支持行级文本差异"
 		if bok && aok && result.BeforeType != result.AfterType {
 			result.Message = "文件类型发生变化，不支持行级文本差异"
 		}
-		return result, nil
-	}
-	limit := s.c.editableByteLimit()
-	if result.BeforeSize > limit || result.AfterSize > limit {
+	} else if large {
 		result.Message = "文件超过文本大小阈值，仅显示差异摘要；可在设置中调整阈值"
-		return result, nil
+	} else {
+		result.TextAvailable = true
 	}
-	if bok {
-		result.BeforeText, err = before.CanonicalText(bi)
-		if err != nil {
-			return nil, err
-		}
+	// Retain only the last detail, with a strict byte cap; never keep decoded
+	// text for the whole archive. A changed display limit invalidates the cache.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.session != p || p.status.State != "ready" {
+		return nil, fmt.Errorf("对比会话已失效")
 	}
-	if aok {
-		result.AfterText, err = after.CanonicalText(ai)
-		if err != nil {
-			return nil, err
-		}
+	p.detail = nil
+	if len(result.BeforeText)+len(result.AfterText) <= 8<<20 {
+		cached := *result
+		p.detail, p.detailLimit = &cached, limit
 	}
-	result.TextAvailable = true
 	return result, nil
+}
+
+// Added/deleted files are classified from paths alone. Compute their logical
+// hash only when requested, using the same raw read as their displayed text.
+func archiveDiffDetailSide(a *pvf.Archive, index int32, knownHash string, limit int32, wantText bool) (string, string, error) {
+	dataType, size, err := a.FileContentInfo(index)
+	if err != nil {
+		return "", "", err
+	}
+	textType := dataType == pvf.TypeScript || dataType == pvf.TypeUnicode
+	if textType && size > limit {
+		return "", knownHash, nil
+	}
+	if !wantText && knownHash != "" {
+		return "", knownHash, nil
+	}
+	raw, err := a.RawBytes(index)
+	if err != nil {
+		return "", "", err
+	}
+	if !textType {
+		return "", archiveDiffContentHash(dataType, raw), nil
+	}
+	text, err := a.CanonicalTextFromRaw(index, raw)
+	if err != nil {
+		return "", "", err
+	}
+	if knownHash == "" {
+		knownHash = archiveDiffContentHash(dataType, []byte(text))
+	}
+	if !wantText {
+		text = ""
+	}
+	return text, knownHash, nil
 }

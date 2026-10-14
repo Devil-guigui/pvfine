@@ -2,6 +2,7 @@ package pvf
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"log"
 	"math"
@@ -123,17 +124,7 @@ func (a *Archive) CanonicalText(i int32) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(raw) == 0 {
-		return "", nil
-	}
-	switch a.items[i].typ {
-	case TypeUnicode:
-		return fixKoreanMojibake(string(utf16.Decode(u16le(raw)))), nil
-	case TypeScript:
-		return a.decodeScriptForPathWithRenderer(raw, a.Path(i), a.canonicalScriptRenderer), nil
-	default:
-		return "", nil
-	}
+	return a.CanonicalTextFromRaw(i, raw)
 }
 
 // SetScriptRenderer replaces the user-facing renderer for subsequent Text
@@ -347,8 +338,23 @@ func (a *Archive) decodeScriptForPath(raw []byte, path string) string {
 }
 
 func (a *Archive) decodeScriptForPathWithRenderer(raw []byte, path string, renderer *rendering.Engine) string {
+	return a.decodeScriptForPathWithResolver(raw, path, renderer, a.ResolveString)
+}
+
+func (a *Archive) decodeScriptForPathWithResolver(raw []byte, path string, renderer *rendering.Engine, resolve func(int32) string) string {
 	var sb strings.Builder
-	sectionFormats, sectionClosers := a.scriptSectionFormats(raw, path, renderer)
+	_ = a.writeScriptForPath(context.Background(), raw, path, renderer, resolve, &sb)
+	return sb.String()
+}
+
+// scriptTextSink permits comparison to hash rendered output without retaining it.
+type scriptTextSink interface {
+	WriteString(string) (int, error)
+	WriteByte(byte) error
+}
+
+func (a *Archive) writeScriptForPath(ctx context.Context, raw []byte, path string, renderer *rendering.Engine, resolve func(int32) string, sb scriptTextSink) error {
+	sectionFormats, sectionClosers := a.scriptSectionFormats(raw, path, renderer, resolve)
 	fileRule := scriptFormatRuleFromSpec(rendering.FormatSpec{})
 	if renderer != nil {
 		fileRule = scriptFormatRuleFromSpec(renderer.FileFormat(path).ForVersion(a.ClientVersion()))
@@ -530,6 +536,11 @@ func (a *Archive) decodeScriptForPathWithRenderer(raw []byte, path string, rende
 		}
 	}
 	for i := 0; i < n; i++ {
+		if i%4096 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		base := i * 5
 		typ := raw[base]
 		v := int32(binary.LittleEndian.Uint32(raw[base+1:]))
@@ -555,7 +566,7 @@ func (a *Archive) decodeScriptForPathWithRenderer(raw []byte, path string, rende
 			f := math.Float32frombits(uint32(v))
 			sb.WriteString(formatScriptFloat(f))
 		case 3:
-			tag := a.ResolveString(v)
+			tag := resolve(v)
 			name, closing, isTag := parseSectionTag(tag)
 			if isTag {
 				depth := len(sectionStack)
@@ -627,18 +638,18 @@ func (a *Archive) decodeScriptForPathWithRenderer(raw []byte, path string, rende
 			sb.WriteString("{")
 			sb.WriteString(strconv.Itoa(int(typ)))
 			sb.WriteString("=`")
-			sb.WriteString(escapeBacktick(a.ResolveString(v)))
+			sb.WriteString(escapeBacktick(resolve(v)))
 			sb.WriteString("`}")
 			atLineStart = false
 			markSectionValue()
 		case 6:
 			writeValuePrefix()
 			sb.WriteString("`")
-			sb.WriteString(escapeBacktick(a.ResolveString(v)))
+			sb.WriteString(escapeBacktick(resolve(v)))
 			sb.WriteString("`")
 		}
 	}
-	return sb.String()
+	return ctx.Err()
 }
 
 func scriptFormatRuleFromSpec(spec rendering.FormatSpec) scriptFormatRule {
@@ -661,7 +672,7 @@ type scriptRenderSection struct {
 // scriptSectionFormats pre-scans paired and legacy unpaired sections so a
 // dynamic tokensPerLineIndex can be resolved before the first value is
 // rendered.
-func (a *Archive) scriptSectionFormats(raw []byte, path string, renderer *rendering.Engine) (map[int]scriptFormatRule, map[string]bool) {
+func (a *Archive) scriptSectionFormats(raw []byte, path string, renderer *rendering.Engine, resolve func(int32) string) (map[int]scriptFormatRule, map[string]bool) {
 	n := len(raw) / 5
 	sectionClosers := make(map[string]bool)
 	for i := 0; i < n; i++ {
@@ -669,7 +680,7 @@ func (a *Archive) scriptSectionFormats(raw []byte, path string, renderer *render
 		if raw[base] != 3 {
 			continue
 		}
-		if name, closing, ok := parseSectionTag(a.ResolveString(int32(binary.LittleEndian.Uint32(raw[base+1:])))); ok && closing {
+		if name, closing, ok := parseSectionTag(resolve(int32(binary.LittleEndian.Uint32(raw[base+1:])))); ok && closing {
 			sectionClosers[name] = true
 		}
 	}
@@ -699,7 +710,7 @@ func (a *Archive) scriptSectionFormats(raw []byte, path string, renderer *render
 		base := i * 5
 		typ := raw[base]
 		if typ == 3 {
-			name, closing, isTag := parseSectionTag(a.ResolveString(int32(binary.LittleEndian.Uint32(raw[base+1:]))))
+			name, closing, isTag := parseSectionTag(resolve(int32(binary.LittleEndian.Uint32(raw[base+1:]))))
 			if !isTag {
 				continue
 			}
@@ -749,7 +760,7 @@ func (a *Archive) scriptSectionFormats(raw []byte, path string, renderer *render
 		if frame == nil || frame.format.tokensPerLineIndex == nil {
 			continue
 		}
-		value, ok := a.scriptTokenValue(raw, i)
+		value, ok := a.scriptTokenValue(raw, i, resolve)
 		if !ok {
 			continue
 		}
@@ -801,7 +812,7 @@ func resolveDynamicScriptFormat(format scriptFormatRule, values []string) script
 	return format
 }
 
-func (a *Archive) scriptTokenValue(raw []byte, index int) (string, bool) {
+func (a *Archive) scriptTokenValue(raw []byte, index int, resolve func(int32) string) (string, bool) {
 	base := index * 5
 	if base < 0 || base+5 > len(raw) {
 		return "", false
@@ -814,7 +825,7 @@ func (a *Archive) scriptTokenValue(raw []byte, index int) (string, bool) {
 	case 2:
 		return formatScriptFloat(math.Float32frombits(uint32(v))), true
 	case 5, 6, 7, 8, 10:
-		return a.ResolveString(v), true
+		return resolve(v), true
 	default:
 		return "", false
 	}

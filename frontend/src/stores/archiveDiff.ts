@@ -25,12 +25,13 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   const starting = ref(false);
   const selecting = ref(false);
   const fileLoading = ref(false);
+  const rootLoading = ref(false);
   const error = ref("");
   const fileError = ref("");
   let epoch = 0;
   let fileEpoch = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const busy = computed(() => starting.value || status.value?.state === "loading" || status.value?.state === "comparing");
+  const busy = computed(() => starting.value || rootLoading.value || ["loading", "comparing", "classifying", "verifying", "sorting", "building", "sorting-tree"].includes(status.value?.state ?? ""));
   const displayedFile = computed(() => orientArchiveDiff(file.value, reverse.value));
   const counts = computed(() => ({
     added: (reverse.value ? status.value?.deleted : status.value?.added) ?? 0,
@@ -38,6 +39,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     deleted: (reverse.value ? status.value?.added : status.value?.deleted) ?? 0,
   }));
   function clearResult() {
+    rootLoading.value = false;
     clearTimeout(timer);
     status.value = null;
     tree.value = [];
@@ -103,8 +105,11 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
       if (!result) throw new Error("对比会话已关闭");
       status.value = result;
       if (result.state === "ready") {
-        const nodes = await ArchiveDiffService.Children(id, "");
-        if (token === epoch) tree.value = treeNodes(nodes ?? []);
+        rootLoading.value = true;
+        try {
+          const nodes = await ArchiveDiffService.Children(id, "");
+          if (token === epoch) tree.value = treeNodes(nodes ?? []);
+        } finally { if (token === epoch) rootLoading.value = false; }
       } else if (result.state === "error") {
         error.value = result.error;
       } else if (result.state !== "cancelled") {
@@ -140,6 +145,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     } finally { if (token === fileEpoch && sessionEpoch === epoch) fileLoading.value = false; }
   }
   async function cancel() {
+    rootLoading.value = false;
     const id = status.value?.id;
     epoch++;
     clearTimeout(timer);
@@ -153,5 +159,5 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   Events.On("archive:closed", close);
   Events.On("archive:reloaded", close);
   return { visible, otherPath, reverse, status, tree, file, displayedFile, selectedKeys, expandedKeys,
-    starting, selecting, busy, fileLoading, error, fileError, counts, open, close, selectArchive, refresh, loadChildren, openFile, cancel };
+    starting, selecting, busy, fileLoading, rootLoading, error, fileError, counts, open, close, selectArchive, refresh, loadChildren, openFile, cancel };
 });

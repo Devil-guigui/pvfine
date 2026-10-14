@@ -65,3 +65,24 @@ test("切换工作区释放会话，过期详情不覆盖新选择", async () =>
   pending.resolve(file); await first; expect(store.file?.path).toBe("b.equ");
   mocks.events.get("archive:opened")?.(); expect(store.visible).toBe(false); expect(store.tree).toEqual([]); expect(mocks.Release).toHaveBeenCalled();
 });
+test("文本复核和建树期间仍处于忙碌状态", () => {
+  const store = useArchiveDiffStore();
+  for (const state of ["classifying", "verifying", "sorting", "building", "sorting-tree"]) {
+    store.status = { ...ready, state };
+    expect(store.busy).toBe(true);
+  }
+  store.status = ready;
+  expect(store.busy).toBe(false);
+});
+test("根节点返回前保持加载状态，取消后忽略旧树", async () => {
+  const store = useArchiveDiffStore(); store.open(); store.otherPath = "other.pvf";
+  const pending = deferred<[]>(); mocks.Children.mockReturnValue(pending.promise);
+  const refresh = store.refresh();
+  await vi.waitFor(() => expect(store.rootLoading).toBe(true));
+  expect(store.busy).toBe(true);
+  await store.cancel();
+  expect(store.busy).toBe(false);
+  pending.resolve([]); await refresh;
+  expect(store.tree).toEqual([]);
+  expect(store.status?.state).toBe("cancelled");
+});

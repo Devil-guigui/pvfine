@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -410,5 +411,494 @@ func BenchmarkArchiveDiffParallelSnapshot(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+// Previous text-hash implementation is kept only as a correctness/performance oracle.
+func archiveDiffSnapshot(ctx context.Context, a *pvf.Archive, offset int, progress func(int)) (pvfversion.Snapshot, error) {
+	return archiveDiffSnapshotWorkers(ctx, a, offset, progress, archiveDiffWorkerCount(a.FileCount()))
+}
+
+type archiveDiffHashResult struct {
+	key   string
+	entry pvfversion.Entry
+	err   error
+}
+
+func archiveDiffSnapshotWorkers(parent context.Context, a *pvf.Archive, offset int, progress func(int), workers int) (pvfversion.Snapshot, error) {
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
+	result := make(pvfversion.Snapshot, a.FileCount())
+	if a.FileCount() == 0 {
+		progress(offset)
+		return result, nil
+	}
+	workers = min(int(a.FileCount()), max(1, workers))
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	// Queue indexes rather than decoded payloads. Each worker retains only the
+	// file it is hashing; the bounded result queue contains compact hashes.
+	jobs := make(chan int32)
+	results := make(chan archiveDiffHashResult, workers)
+	largeFile := make(chan struct{}, 1)
+	var done sync.WaitGroup
+	done.Add(workers + 1)
+	go func() {
+		defer done.Done()
+		defer close(jobs)
+		for i := int32(0); i < a.FileCount(); i++ {
+			select {
+			case jobs <- i:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	for worker := 0; worker < workers; worker++ {
+		go func() {
+			defer done.Done()
+			for {
+				var index int32
+				var ok bool
+				select {
+				case <-ctx.Done():
+					return
+				case index, ok = <-jobs:
+					if !ok {
+						return
+					}
+				}
+				file := a.File(index)
+				// Large logical text expansion is the main transient memory risk. Allow
+				// at most one >=8 MiB payload to decode/hash at a time, independently of
+				// the CPU-based worker count used for ordinary files.
+				large := file.DataSize >= 8<<20
+				if large {
+					select {
+					case largeFile <- struct{}{}:
+					case <-ctx.Done():
+						return
+					}
+				}
+				value := archiveDiffHashFile(ctx, a, index, file)
+				if large {
+					<-largeFile
+				}
+				select {
+				case results <- value:
+				case <-ctx.Done():
+					return
+				}
+				if value.err != nil {
+					return
+				}
+			}
+		}()
+	}
+	go func() { done.Wait(); close(results) }()
+	processed := 0
+	var firstErr error
+	// One collector owns the map and progress updates, keeping progress ordered
+	// even when file computations finish out of order. Drain after cancellation
+	// so no producer or worker survives a released comparison task.
+	for value := range results {
+		if firstErr != nil || ctx.Err() != nil {
+			continue
+		}
+		if value.err != nil {
+			firstErr = value.err
+		} else if _, exists := result[value.key]; exists {
+			firstErr = fmt.Errorf("归档包含重复路径 %q，无法唯一比较", value.entry.Path)
+		}
+		if firstErr != nil {
+			cancel()
+			continue
+		}
+		result[value.key] = value.entry
+		processed++
+		if processed == 1 || processed%64 == 0 {
+			progress(offset + processed)
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
+	progress(offset + processed)
+	return result, nil
+}
+
+func archiveDiffHashFile(ctx context.Context, a *pvf.Archive, index int32, file pvf.File) archiveDiffHashResult {
+	if err := ctx.Err(); err != nil {
+		return archiveDiffHashResult{err: err}
+	}
+	path := pvfversion.DisplayPath(a.Path(index))
+	key := pvfversion.CanonicalPath(path)
+	if key == "" {
+		return archiveDiffHashResult{err: fmt.Errorf("归档中存在空路径")}
+	}
+	var data []byte
+	var err error
+	if file.DataType == pvf.TypeScript || file.DataType == pvf.TypeUnicode {
+		var value string
+		value, err = a.CanonicalText(index)
+		data = []byte(value)
+	} else {
+		data, err = a.RawBytes(index)
+	}
+	if err != nil {
+		return archiveDiffHashResult{err: fmt.Errorf("读取 %s 失败: %w", path, err)}
+	}
+	if err := ctx.Err(); err != nil {
+		return archiveDiffHashResult{err: err}
+	}
+	return archiveDiffHashResult{key: key, entry: pvfversion.Entry{Path: path, DataType: file.DataType, Hash: archiveDiffContentHash(file.DataType, data)}}
+}
+
+func TestArchiveDiffOptimizedComparisonMatchesCanonicalOracle(t *testing.T) {
+	before, after := pvf.New(), pvf.New()
+	addDiffText(t, after, "temporary.equ", "[name]\n`different pool offsets`")
+	for i := 0; i < 256; i++ {
+		path := fmt.Sprintf("equipment/%03d.equ", i)
+		text := fmt.Sprintf("[name]\n`item %d`\n[price]\n%d", i, i*10)
+		addDiffText(t, before, path, text)
+		addDiffText(t, after, path, text)
+	}
+	if _, err := after.RemoveFiles([]int32{0}); err != nil {
+		t.Fatal(err)
+	}
+	index, _ := after.Find("equipment/010.equ")
+	if err := after.SetText(index, "[name]\n`changed`\n[price]\n42"); err != nil {
+		t.Fatal(err)
+	}
+	index, _ = after.Find("equipment/020.equ")
+	if _, err := after.RemoveFiles([]int32{index}); err != nil {
+		t.Fatal(err)
+	}
+	addDiffText(t, after, "equipment/new.equ", "[name]\n`added`")
+	before.AddFile("fallback.equ", []byte{1, 1, 0, 0, 0}, pvf.TypeScript)
+	after.AddFile("fallback.equ", []byte{9, 2, 0, 0, 0}, pvf.TypeScript) // Both ignored by canonical rendering.
+	before.AddFile("trailing.equ", []byte{0, 1, 0, 0, 0}, pvf.TypeScript)
+	after.AddFile("trailing.equ", []byte{0, 1, 0, 0, 0, 255}, pvf.TypeScript)
+	before.AddFile("text.str", []byte{'A', 0}, pvf.TypeUnicode)
+	after.AddFile("text.str", []byte{'A', 0, 255}, pvf.TypeUnicode) // UTF-16 decoder ignores the odd tail.
+	before.AddFile("nan.equ", []byte{2, 1, 0, 192, 127}, pvf.TypeScript)
+	after.AddFile("nan.equ", []byte{2, 2, 0, 192, 127}, pvf.TypeScript)
+	before.AddFile("type.bin", []byte{1}, 99)
+	after.AddFile("type.bin", []byte{1}, 100)
+	expectedBefore, err := pvfversion.SnapshotFromArchive(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedAfter, err := pvfversion.SnapshotFromArchive(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := pvfversion.Diff(expectedBefore, expectedAfter)
+	previous := 0
+	actual, err := archiveDiffCompare(context.Background(), before, after, func(n int) {
+		if n < previous {
+			t.Errorf("progress regressed: %d -> %d", previous, n)
+		}
+		previous = n
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actual) != len(expected) {
+		t.Fatalf("optimized changes=%+v expected=%+v", actual, expected)
+	}
+	for i := range actual {
+		if actual[i].Path != expected[i].Path || actual[i].Operation != expected[i].Operation {
+			t.Fatalf("change=%+v expected=%+v", actual[i], expected[i])
+		}
+		if actual[i].BeforeHash != "" && actual[i].BeforeHash != expected[i].BeforeHash {
+			t.Fatal("before hash no longer canonical")
+		}
+		if actual[i].AfterHash != "" && actual[i].AfterHash != expected[i].AfterHash {
+			t.Fatal("after hash no longer canonical")
+		}
+	}
+	if previous != int(before.FileCount()+after.FileCount()) {
+		t.Fatal("progress did not finish")
+	}
+}
+
+func TestArchiveDiffSkipsUnpairedPayloadAndHashesDetailsOnDemand(t *testing.T) {
+	c, s, path := diffFixture(t)
+	added := addDiffText(t, c.archive, "added.equ", "[price]\n42")
+	p, err := s.Start(ArchiveDiffRequest{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := waitDiff(t, s, p.ID); status.State != "ready" {
+		t.Fatalf("status=%+v", status)
+	}
+	s.mu.Lock()
+	change := s.session.changes["added.equ"]
+	s.mu.Unlock()
+	if change.AfterHash != "" {
+		t.Fatal("added file was unnecessarily hashed during classification")
+	}
+	meta, err := s.FileDiff(p.ID, "added.equ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := c.archive.CanonicalText(added)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.TextAvailable || meta.AfterHash != archiveDiffContentHash(pvf.TypeScript, []byte(text)) {
+		t.Fatalf("lazy detail=%+v", meta)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := archiveDiffCompare(ctx, c.archive, c.archive, func(int) {}); err != context.Canceled {
+		t.Fatalf("cancel=%v", err)
+	}
+}
+
+func BenchmarkArchiveDiffOptimizedComparison(b *testing.B) {
+	a := pvf.New()
+	for i := 0; i < 2048; i++ {
+		if _, err := a.AddFileText(fmt.Sprintf("items/%04d.equ", i), "[name]\n`common value`\n[values]\n"+strings.Repeat("1 2 3 4 5 6 7 8\n", 64), pvf.TypeScript); err != nil {
+			b.Fatal(err)
+		}
+	}
+	var packed bytes.Buffer
+	if err := a.SaveTo(&packed); err != nil {
+		b.Fatal(err)
+	}
+	before, err := pvf.Parse(packed.Bytes())
+	if err != nil {
+		b.Fatal(err)
+	}
+	after, err := pvf.Parse(packed.Bytes())
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, kind := range []string{"canonical-text", "token-chunks"} {
+		b.Run(kind, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if kind == "canonical-text" {
+					old, err := archiveDiffSnapshot(context.Background(), before, 0, func(int) {})
+					if err != nil {
+						b.Fatal(err)
+					}
+					next, err := archiveDiffSnapshot(context.Background(), after, 0, func(int) {})
+					if err != nil {
+						b.Fatal(err)
+					}
+					if len(pvfversion.Diff(old, next)) != 0 {
+						b.Fatal("fixture differs")
+					}
+				} else {
+					changes, err := archiveDiffCompare(context.Background(), before, after, func(int) {})
+					if err != nil {
+						b.Fatal(err)
+					}
+					if len(changes) != 0 {
+						b.Fatal("fixture differs")
+					}
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkArchiveDiffOversizedColdChunk(b *testing.B) {
+	a := pvf.New()
+	a.AddFile("padding.bin", make([]byte, (64<<20)+1), 99)
+	for i := 0; i < 8; i++ {
+		if _, err := a.AddFileText(fmt.Sprintf("items/%02d.equ", i), "[name]\n`shared value`\n[price]\n42", pvf.TypeScript); err != nil {
+			b.Fatal(err)
+		}
+	}
+	var packed bytes.Buffer
+	if err := a.SaveTo(&packed); err != nil {
+		b.Fatal(err)
+	}
+	data := packed.Bytes()
+	for _, kind := range []string{"canonical-text", "token-chunks"} {
+		b.Run(kind, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				before, err := pvf.Parse(data)
+				if err != nil {
+					b.Fatal(err)
+				}
+				after, err := pvf.Parse(data)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if kind == "canonical-text" {
+					old, err := archiveDiffSnapshot(context.Background(), before, 0, func(int) {})
+					if err != nil {
+						b.Fatal(err)
+					}
+					next, err := archiveDiffSnapshot(context.Background(), after, 0, func(int) {})
+					if err != nil {
+						b.Fatal(err)
+					}
+					if len(pvfversion.Diff(old, next)) != 0 {
+						b.Fatal("fixture differs")
+					}
+				} else {
+					changes, err := archiveDiffCompare(context.Background(), before, after, func(int) {})
+					if err != nil {
+						b.Fatal(err)
+					}
+					if len(changes) != 0 {
+						b.Fatal("fixture differs")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestArchiveDiffDetailCacheIsIsolatedAndReleased(t *testing.T) {
+	c, s, path := diffFixture(t)
+	i, _ := c.archive.Find("equipment/changed.equ")
+	if err := c.archive.SetText(i, "[name]\n`cached`"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Start(ArchiveDiffRequest{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := waitDiff(t, s, p.ID); status.State != "ready" {
+		t.Fatalf("status=%+v", status)
+	}
+	first, err := s.FileDiff(p.ID, "equipment/changed.equ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := *first
+	first.AfterText = "caller mutation"
+	again, err := s.FileDiff(p.ID, "EQUIPMENT\\CHANGED.EQU")
+	if err != nil || *again != want {
+		t.Fatalf("cached value was mutated: %v", err)
+	}
+	s.mu.Lock()
+	cached := s.session.detail
+	s.mu.Unlock()
+	if cached == nil {
+		t.Fatal("small detail was not cached")
+	}
+	s.Release()
+	if _, err := s.FileDiff(p.ID, "equipment/changed.equ"); err == nil {
+		t.Fatal("released detail remained accessible")
+	}
+}
+
+func archiveDiffLegacyChildren(changes []pvfversion.FileChange) map[string][]ArchiveDiffNode {
+	nodes := make(map[string]map[string]ArchiveDiffNode)
+	for _, change := range changes {
+		parts := strings.Split(change.DisplayPath, "/")
+		parent := ""
+		for i, name := range parts {
+			path := strings.Join(parts[:i+1], "/")
+			key := pvfversion.CanonicalPath(path)
+			if nodes[parent] == nil {
+				nodes[parent] = make(map[string]ArchiveDiffNode)
+			}
+			node := nodes[parent][key]
+			node.Path = path
+			node.Name = name
+			node.Count++
+			node.IsDir = i < len(parts)-1
+			if !node.IsDir {
+				node.Operation = string(change.Operation)
+			}
+			nodes[parent][key] = node
+			parent = key
+		}
+	}
+	result := make(map[string][]ArchiveDiffNode, len(nodes))
+	for parent, entries := range nodes {
+		list := make([]ArchiveDiffNode, 0, len(entries))
+		for _, node := range entries {
+			list = append(list, node)
+		}
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].IsDir != list[j].IsDir {
+				return list[i].IsDir
+			}
+			return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
+		})
+		result[parent] = list
+	}
+	return result
+}
+
+func diffTreeChanges(n int) []pvfversion.FileChange {
+	changes := make([]pvfversion.FileChange, n)
+	for i := range changes {
+		path := fmt.Sprintf("equipment/group%03d/subdir/item%06d.equ", i%100, i)
+		changes[i] = pvfversion.FileChange{Path: path, DisplayPath: path, Operation: pvfversion.OperationModify}
+	}
+	return changes
+}
+
+func TestArchiveDiffTreeMatchesPreviousAndCancels(t *testing.T) {
+	changes := diffTreeChanges(4096)
+	got := archiveDiffChildren(changes)
+	if !reflect.DeepEqual(got, archiveDiffLegacyChildren(changes)) {
+		t.Fatal("tree paths, order or directory counts changed")
+	}
+	if len(archiveDiffChildren(nil)) != 0 {
+		t.Fatal("empty comparison has tree nodes")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := archiveDiffBuildChildren(ctx, changes, func(state string, n, total int) {
+		if state == "building" && n >= 64 {
+			cancel()
+		}
+	})
+	if err != context.Canceled {
+		t.Fatalf("tree cancellation=%v", err)
+	}
+}
+
+func TestArchiveDiffReportsTextVerificationPhase(t *testing.T) {
+	before, after := pvf.New(), pvf.New()
+	addDiffText(t, before, "changed.equ", "[name]\n`old`")
+	addDiffText(t, after, "changed.equ", "[name]\n`new`")
+	var phases []string
+	last := map[string]int{}
+	changes, err := archiveDiffComparePhases(context.Background(), before, after, func(int) {}, func(state string, n, total int) {
+		if n < last[state] || n > total {
+			t.Errorf("invalid phase progress %s: %d/%d", state, n, total)
+		}
+		last[state] = n
+		phases = append(phases, state)
+	})
+	if err != nil || len(changes) != 1 || last["verifying"] != 2 {
+		t.Fatalf("missing text verification progress: %v %v", phases, err)
+	}
+}
+
+func BenchmarkArchiveDiffTree(b *testing.B) {
+	changes := diffTreeChanges(100000)
+	for _, kind := range []string{"previous", "directory-cache"} {
+		b.Run(kind, func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				var nodes map[string][]ArchiveDiffNode
+				if kind == "previous" {
+					nodes = archiveDiffLegacyChildren(changes)
+				} else {
+					nodes = archiveDiffChildren(changes)
+				}
+				if len(nodes["equipment"]) != 100 {
+					b.Fatal("incorrect tree")
+				}
+			}
+		})
 	}
 }

@@ -14,7 +14,18 @@ const operationLabels: Record<string, string> = { add: "新增", modify: "变更
 const operationMarks: Record<string, string> = { add: "A", modify: "M", delete: "D" };
 const parsedFile = computed(() => diff.displayedFile);
 const parsedLines = computed(() => computeDiffLines(parsedFile.value));
-const progress = computed(() => diff.status?.total ? Math.round(diff.status.processed / diff.status.total * 100) : 0);
+// A phase may finish while the next phase is still running. Only a ready,
+// displayed result represents completion; never round pending work to 100%.
+const progress = computed(() => diff.status?.total ? Math.min(diff.busy ? 99 : 100, Math.floor(diff.status.processed / diff.status.total * 100)) : 0);
+const progressLabel = computed(() => {
+  const state = diff.rootLoading ? "building" : diff.status?.state;
+  const labels: Record<string, string> = {
+    loading: "正在加载归档", comparing: "正在比较文件", classifying: "正在整理差异",
+    verifying: "正在复核文本内容", sorting: "正在排序差异", building: "正在生成差异树", "sorting-tree": "正在排序差异树",
+  };
+  const label = labels[state ?? "loading"] ?? "正在处理";
+  return diff.status?.total && !diff.rootLoading ? `${label} ${diff.status.processed.toLocaleString()} / ${diff.status.total.toLocaleString()}` : `${label}…`;
+});
 function renderLabel({ option }: { option: TreeOption }) {
   const node = (option as DiffTreeNode).node;
   const op = diffOperation(node.operation, diff.reverse);
@@ -60,8 +71,8 @@ function nodeProps({ option }: { option: TreeOption }) {
       </div>
       <NAlert v-if="diff.error" type="error" class="compare-error">{{ diff.error }}</NAlert>
       <div v-if="diff.busy" class="compare-progress">
-        <span>{{ diff.status?.state === 'comparing' ? `正在比较 ${diff.status.processed.toLocaleString()} / ${diff.status.total.toLocaleString()} 个文件` : '正在加载归档…' }}</span>
-        <NProgress v-if="diff.status?.state === 'comparing'" type="line" :percentage="progress" :show-indicator="false" />
+        <span>{{ progressLabel }}</span>
+        <NProgress v-if="diff.status?.total && !diff.rootLoading" type="line" :percentage="progress" :show-indicator="false" />
       </div>
       <div class="compare-summary">
         <span class="operation-add">A 新增 {{ diff.counts.added }}</span>
@@ -74,7 +85,7 @@ function nodeProps({ option }: { option: TreeOption }) {
           <NTree v-if="diff.tree.length" v-model:selected-keys="diff.selectedKeys" v-model:expanded-keys="diff.expandedKeys"
             :data="diff.tree" :on-load="diff.loadChildren" :render-label="renderLabel" :node-props="nodeProps"
             virtual-scroll block-line :expand-on-click="false" :selectable="true" class="difference-tree" />
-          <NEmpty v-else :description="diff.busy ? '正在生成差异树' : diff.status?.state === 'ready' ? '两份归档内容一致' : diff.status?.state === 'cancelled' ? '比较已取消，点击刷新重试' : '选择另一份归档开始比较'" />
+          <NEmpty v-else :description="diff.busy ? progressLabel : diff.status?.state === 'ready' ? '两份归档内容一致' : diff.status?.state === 'cancelled' ? '比较已取消，点击刷新重试' : '选择另一份归档开始比较'" />
         </aside>
         <main class="compare-detail">
           <NSpin v-if="diff.fileLoading" class="detail-loading" />
@@ -82,8 +93,8 @@ function nodeProps({ option }: { option: TreeOption }) {
           <template v-else-if="parsedFile">
             <div class="file-heading"><span :class="`operation-${parsedFile.operation}`">{{ operationLabels[parsedFile.operation] }}</span><strong :title="parsedFile.path">{{ parsedFile.path }}</strong></div>
             <div class="file-metadata">
-              <div><small>基准</small><span v-if="parsedFile.beforeExists">类型 {{ parsedFile.beforeType }}，{{ parsedFile.beforeSize.toLocaleString() }} 字节</span><span v-else>不存在</span><code v-if="parsedFile.beforeExists" :title="parsedFile.beforeHash">{{ parsedFile.beforeHash }}</code></div>
-              <div><small>目标</small><span v-if="parsedFile.afterExists">类型 {{ parsedFile.afterType }}，{{ parsedFile.afterSize.toLocaleString() }} 字节</span><span v-else>不存在</span><code v-if="parsedFile.afterExists" :title="parsedFile.afterHash">{{ parsedFile.afterHash }}</code></div>
+              <div><small>基准</small><span v-if="parsedFile.beforeExists">类型 {{ parsedFile.beforeType }}，{{ parsedFile.beforeSize.toLocaleString() }} 字节</span><span v-else>不存在</span><code v-if="parsedFile.beforeExists && parsedFile.beforeHash" :title="parsedFile.beforeHash">{{ parsedFile.beforeHash }}</code></div>
+              <div><small>目标</small><span v-if="parsedFile.afterExists">类型 {{ parsedFile.afterType }}，{{ parsedFile.afterSize.toLocaleString() }} 字节</span><span v-else>不存在</span><code v-if="parsedFile.afterExists && parsedFile.afterHash" :title="parsedFile.afterHash">{{ parsedFile.afterHash }}</code></div>
             </div>
             <UnifiedDiff v-if="parsedFile.textAvailable && parsedLines.lines.length" :diff="parsedFile" />
             <NEmpty v-else :description="parsedFile.message || (!parsedFile.beforeText && !parsedFile.afterText ? `${operationLabels[parsedFile.operation]}空文件，没有文本行级差异` : '没有文本行级差异')" class="detail-empty" />
