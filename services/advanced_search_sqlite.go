@@ -450,7 +450,7 @@ func (d *advancedSQLite) build(c *core, a *pvf.Archive) error {
 			return e
 		}
 		pending++
-		refs += len(result.refs)
+		refs += result.refCount
 		if e = flush(); e != nil {
 			return e
 		}

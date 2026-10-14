@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,7 +60,7 @@ func TestAdvancedReferencePipelineMatchesSequential(t *testing.T) {
 				if !ok {
 					break
 				}
-				want[index] = advancedReferenceResult{index: index, path: a.Path(index), file: a.File(index), refs: refs}
+				want[index] = advancedReferenceResult{index: index, path: a.Path(index), file: a.File(index), refs: refs, refCount: len(refs)}
 			}
 			p := d.startReferencePipeline(c, a, a.NewStringReferenceScanner(), workers, nil)
 			defer p.close()
@@ -165,5 +167,98 @@ func BenchmarkAdvancedReferencePipeline(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func TestAdvancedReferencePipelineWriterConsumesBeforeReuse(t *testing.T) {
+	c, d, _ := referencePipelineFixture(t, 129, 1000)
+	a := c.archive
+	// Vary result sizes so a later parse cannot silently replace an earlier
+	// file's count. Shared field offsets and token ordering are checked too.
+	for i := int32(0); i < a.FileCount(); i += 7 {
+		if err := a.SetRawBytes(i, []byte{7, 0, 0, 0, 0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := make(map[int32]advancedReferenceResult)
+	scanner := a.NewStringReferenceScanner()
+	for {
+		index, refs, ok, err := scanner.Next(d.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			break
+		}
+		want[index] = advancedReferenceResult{index: index, path: a.Path(index), file: a.File(index), refs: refs, refCount: len(refs)}
+	}
+	var mu sync.Mutex
+	written := make(map[int32]bool)
+	p := d.startReferencePipeline(c, a, a.NewStringReferenceScanner(), 4, func(_ context.Context, _ int, result advancedReferenceResult) error {
+		expected := want[result.index]
+		// Reused empty slices can have non-nil backing storage. Compare their
+		// values, including order, rather than allocation details.
+		refsEqual := slices.EqualFunc(result.refs, expected.refs, func(left, right pvf.StringReference) bool {
+			return left.Offset == right.Offset && left.Occurrences == right.Occurrences && slices.Equal(left.TokenTypes, right.TokenTypes) && slices.Equal(left.FileFields, right.FileFields)
+		})
+		if result.refCount != expected.refCount || result.path != expected.path || !reflect.DeepEqual(result.file, expected.file) || !refsEqual {
+			return fmt.Errorf("writer received incorrect references for file %d", result.index)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if written[result.index] {
+			return fmt.Errorf("writer received duplicate file %d", result.index)
+		}
+		written[result.index] = true
+		return nil
+	})
+	defer p.close()
+	received := make(map[int32]bool)
+	for result := range p.results {
+		expected, ok := want[result.index]
+		if !ok || received[result.index] || result.refs != nil || result.refCount != expected.refCount || result.path != expected.path || !reflect.DeepEqual(result.file, expected.file) {
+			t.Fatalf("channel published borrowed or incorrect result for file %d", result.index)
+		}
+		mu.Lock()
+		done := written[result.index]
+		mu.Unlock()
+		if !done {
+			t.Fatal("channel result arrived before synchronous writer finished")
+		}
+		received[result.index] = true
+	}
+	if err := p.err(); err != nil || len(received) != len(want) {
+		t.Fatalf("pipeline failed: received=%d want=%d err=%v", len(received), len(want), err)
+	}
+}
+
+func TestAdvancedReferencePipelineCancelsBlockedSynchronousWriter(t *testing.T) {
+	c, d, _ := referencePipelineFixture(t, 129, 1000)
+	started := make(chan struct{}, 1)
+	p := d.startReferencePipeline(c, c.archive, c.archive.NewStringReferenceScanner(), 4, func(ctx context.Context, _ int, _ advancedReferenceResult) error {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	defer p.close()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer did not start")
+	}
+	d.cancel()
+	select {
+	case <-p.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancellation left writer or reader blocked")
+	}
+	if !errors.Is(p.err(), context.Canceled) {
+		t.Fatalf("lost cancellation: %v", p.err())
+	}
+	for range p.results {
+		t.Fatal("canceled writer published a result")
 	}
 }

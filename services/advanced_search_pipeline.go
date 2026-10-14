@@ -15,10 +15,11 @@ type advancedReferenceJob struct {
 }
 
 type advancedReferenceResult struct {
-	index int32
-	path  string
-	file  pvf.File
-	refs  []pvf.StringReference
+	index    int32
+	path     string
+	file     pvf.File
+	refs     []pvf.StringReference
+	refCount int
 }
 
 // A single reader owns archive access and decompression. Workers parse immutable
@@ -31,6 +32,9 @@ type advancedReferencePipeline struct {
 	done    chan struct{}
 }
 
+// write must consume refs and their nested slices before returning. With a
+// writer, channel results contain only file metadata and refCount; without a
+// writer, they also contain independently owned refs.
 func (d *advancedSQLite) startReferencePipeline(c *core, a *pvf.Archive, scanner *pvf.StringReferenceScanner, workers int, write func(context.Context, int, advancedReferenceResult) error) *advancedReferencePipeline {
 	ctx, cancel := context.WithCancelCause(d.ctx)
 	p := &advancedReferencePipeline{ctx: ctx, cancel: cancel, results: make(chan advancedReferenceResult), done: make(chan struct{})}
@@ -79,6 +83,7 @@ func (d *advancedSQLite) startReferencePipeline(c *core, a *pvf.Archive, scanner
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer wg.Done()
+			var workspace pvf.StringReferenceWorkspace
 			for {
 				select {
 				case <-ctx.Done():
@@ -87,12 +92,18 @@ func (d *advancedSQLite) startReferencePipeline(c *core, a *pvf.Archive, scanner
 					if !ok {
 						return
 					}
-					refs, err := job.input.References(ctx)
+					var refs []pvf.StringReference
+					var err error
+					if write != nil {
+						refs, err = workspace.References(ctx, job.input)
+					} else {
+						refs, err = job.input.References(ctx)
+					}
 					if err != nil {
 						cancel(err)
 						return
 					}
-					result := advancedReferenceResult{index: job.index, path: job.path, file: job.file, refs: refs}
+					result := advancedReferenceResult{index: job.index, path: job.path, file: job.file, refs: refs, refCount: len(refs)}
 					// Release the raw snapshot before waiting for SQLite.
 					job.input = pvf.StringReferenceInput{}
 					if write != nil {
@@ -100,6 +111,11 @@ func (d *advancedSQLite) startReferencePipeline(c *core, a *pvf.Archive, scanner
 							cancel(err)
 							return
 						}
+						// No borrowed slice may cross the channel. Drop all local
+						// references before waiting, including oversized storage.
+						result.refs = nil
+						refs = nil
+						workspace.Reset()
 					}
 					select {
 					case p.results <- result:
