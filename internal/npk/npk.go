@@ -221,50 +221,74 @@ func (c *imgCursor) skip(count int64) error {
 	return nil
 }
 
+// ReadIMGFrameCount reads the fixed IMG header without reading frame tables,
+// palettes or sprite metadata. Indexing only needs this for status statistics.
+func ReadIMGFrameCount(r io.ReaderAt, offset, size int64) (int32, error) {
+	if offset < 0 || size < 32 {
+		return 0, ErrNotIMG
+	}
+	// Both supported magic layouts have a 32-byte fixed header. Read once
+	// rather than issuing a file read for each magic byte and integer.
+	var header [32]byte
+	if _, err := r.ReadAt(header[:], offset); err != nil {
+		return 0, err
+	}
+	_, _, count, err := readIMGHeader(&imgCursor{r: bytes.NewReader(header[:]), size: 32})
+	return count, err
+}
+
+func readIMGHeader(c *imgCursor) (int32, int32, int32, error) {
+	magic, err := readCursorCString(c, 18)
+	if err != nil {
+		return 0, 0, 0, ErrNotIMG
+	}
+	newFormat := magic == imgMagic
+	oldFormat := magic == imgMagicOld
+	if !newFormat && !oldFormat {
+		return 0, 0, 0, ErrNotIMG
+	}
+	var imagesSize int32
+	if newFormat {
+		imagesSize, err = c.readInt32()
+		if err != nil {
+			return 0, 0, 0, err
+		}
+	} else if _, err := c.readInt16(); err != nil {
+		return 0, 0, 0, err
+	}
+	if imagesSize < 0 {
+		return 0, 0, 0, fmt.Errorf("%w: images_size 为负数", ErrNotIMG)
+	}
+	_, err = c.readInt32() // keep
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	version, err := c.readInt32()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	count, err := c.readInt32()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if count < 0 || count > maxIMGImages {
+		return 0, 0, 0, fmt.Errorf("%w: 无效图片数量", ErrNotIMG)
+	}
+	if version != 1 && version != 2 && version != 4 && version != 5 && version != 6 {
+		return 0, 0, 0, fmt.Errorf("%w: v%d", ErrUnsupported, version)
+	}
+	return imagesSize, version, count, nil
+}
+
 // ParseIMGAt parses only an IMG header/table from an NPK member.
 func ParseIMGAt(r io.ReaderAt, offset, size int64) (*IMGFile, error) {
 	if offset < 0 || size < 0 {
 		return nil, ErrNotIMG
 	}
 	c := &imgCursor{r: r, base: offset, size: size}
-	magic, err := readCursorCString(c, 18)
-	if err != nil {
-		return nil, ErrNotIMG
-	}
-	newFormat := magic == imgMagic
-	oldFormat := magic == imgMagicOld
-	if !newFormat && !oldFormat {
-		return nil, ErrNotIMG
-	}
-	var imagesSize int32
-	if newFormat {
-		imagesSize, err = c.readInt32()
-		if err != nil {
-			return nil, err
-		}
-	} else if _, err := c.readInt16(); err != nil {
-		return nil, err
-	}
-	if imagesSize < 0 {
-		return nil, fmt.Errorf("%w: images_size 为负数", ErrNotIMG)
-	}
-	_, err = c.readInt32() // keep
+	imagesSize, version, count, err := readIMGHeader(c)
 	if err != nil {
 		return nil, err
-	}
-	version, err := c.readInt32()
-	if err != nil {
-		return nil, err
-	}
-	count, err := c.readInt32()
-	if err != nil {
-		return nil, err
-	}
-	if count < 0 || count > maxIMGImages {
-		return nil, fmt.Errorf("%w: 无效图片数量", ErrNotIMG)
-	}
-	if version != 1 && version != 2 && version != 4 && version != 5 && version != 6 {
-		return nil, fmt.Errorf("%w: v%d", ErrUnsupported, version)
 	}
 	result := &IMGFile{Version: version, ImagesSize: int64(imagesSize), Images: make([]ImageMeta, 0, count)}
 	if version == 5 {

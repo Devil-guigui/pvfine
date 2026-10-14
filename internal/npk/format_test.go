@@ -263,3 +263,21 @@ func writeTempBytes(t *testing.T, data []byte) string {
 	}
 	return path
 }
+
+func TestReadIMGFrameCountWithoutFrameTable(t *testing.T) {
+	// A v2 fixed header claiming a large table must be counted without reading
+	// or allocating that table. Full validation is deferred to image requests.
+	data := append([]byte("Neople Img File"), 0)
+	for _, value := range []int32{0, 0, 2, 1000000} {
+		var raw [4]byte
+		binary.LittleEndian.PutUint32(raw[:], uint32(value))
+		data = append(data, raw[:]...)
+	}
+	count, err := ReadIMGFrameCount(bytes.NewReader(data), 0, int64(len(data)))
+	if err != nil || count != 1000000 {
+		t.Fatalf("header frame count = %d, %v", count, err)
+	}
+	if _, err := ReadIMGFrameCount(bytes.NewReader(data[:20]), 0, 20); err == nil {
+		t.Fatal("truncated header should fail")
+	}
+}

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"os"
@@ -146,4 +147,60 @@ func TestRealImageServiceWithImagePacks2(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("image index did not finish: %#v", service.IndexStatus())
+}
+
+func TestLocatorIndexCacheLoadsImagesOnDemand(t *testing.T) {
+	root := t.TempDir()
+	packagePath := filepath.Join(root, "test.npk")
+	writeImageTestNPK(t, packagePath, "sprite/item/test.img")
+	cachePath := filepath.Join(t.TempDir(), "index.json")
+	service := &ImageService{directory: root, cachePath: cachePath, generation: 1}
+	service.buildIndex(context.Background(), root, 1, time.Now())
+	if service.IndexStatus().State != ImageIndexStateReady {
+		t.Fatal("index did not build")
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"img":`, `"palettes":`, `"sprites":`, `"dataOffset":`, `"memoryWidth":`} {
+		if bytes.Contains(data, []byte(field)) {
+			t.Fatalf("locator cache contains frame data field %s", field)
+		}
+	}
+	snapshot, err := loadImageIndexCacheAt(root, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached := &ImageService{directory: root, snapshot: snapshot, generation: 1}
+	image, err := cached.GetImage("item/test.img", 0)
+	if err != nil || image == nil || image.Width != 1 || image.Height != 1 {
+		t.Fatalf("on-demand image = %#v, %v", image, err)
+	}
+	for _, frame := range []int32{-1, 1} {
+		image, err := cached.GetImage("item/test.img", frame)
+		if err != nil || image != nil {
+			t.Fatalf("out-of-range frame %d = %#v, %v", frame, image, err)
+		}
+	}
+	if err := os.Remove(packagePath); err != nil {
+		t.Fatal(err)
+	}
+	image, err = cached.GetImage("item/test.img", 0)
+	if err != nil || image == nil {
+		t.Fatalf("PNG cache hit = %#v, %v", image, err)
+	}
+}
+
+func TestLocatorIndexRejectsLegacyCacheBeforeDecodingPayload(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "index.json")
+	// An intentionally incomplete old payload proves version checking happens
+	// before the expensive decode and manifest scan.
+	if err := os.WriteFile(cachePath, []byte(`{"version":1,"images":[`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadImageIndexCacheAt(t.TempDir(), cachePath)
+	if err == nil || err.Error() != "图像索引缓存版本不匹配" {
+		t.Fatalf("legacy cache error = %v", err)
+	}
 }

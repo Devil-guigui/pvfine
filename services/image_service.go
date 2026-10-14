@@ -23,7 +23,7 @@ import (
 	"pvfine/internal/npk"
 )
 
-const imageIndexVersion = 1
+const imageIndexVersion = 2
 
 // NPK packages are independent scan units. Keep the pool bounded so a large
 // resource directory does not create one goroutine and file descriptor per
@@ -43,11 +43,10 @@ type imageManifest struct {
 }
 
 type persistedImageRecord struct {
-	Path        string       `json:"path"`
-	NPK         string       `json:"npk"`
-	EntryOffset int64        `json:"entryOffset"`
-	EntrySize   int64        `json:"entrySize"`
-	IMG         *npk.IMGFile `json:"img"`
+	Path        string `json:"path"`
+	NPK         string `json:"npk"`
+	EntryOffset int64  `json:"entryOffset"`
+	EntrySize   int64  `json:"entrySize"`
 }
 
 type persistedImageIndex struct {
@@ -67,7 +66,6 @@ type imageRecord struct {
 	npkRelative string
 	offset      int64
 	size        int64
-	img         *npk.IMGFile
 }
 
 type imageSnapshot struct {
@@ -259,7 +257,7 @@ func (s *ImageService) GetImage(path string, index int32) (*ImageData, error) {
 		return nil, nil
 	}
 	record := snapshot.byPath[keyPath]
-	if record == nil || record.img == nil || index >= int32(len(record.img.Images)) {
+	if record == nil {
 		debugLog("GetImage path=%s frame=%d frame-unavailable", path, index)
 		s.mu.RUnlock()
 		return nil, nil
@@ -276,7 +274,7 @@ func (s *ImageService) GetImage(path string, index int32) (*ImageData, error) {
 		s.mu.RUnlock()
 		return nil, errors.New("NPK 索引路径越界")
 	}
-	npkOffset, npkSize, img := record.offset, record.size, record.img
+	npkOffset, npkSize := record.offset, record.size
 	s.mu.RUnlock()
 
 	finishDecode := debugPhase("GetImage.read-and-decode", fmt.Sprintf("path=%s frame=%d cache=miss", path, index))
@@ -284,6 +282,17 @@ func (s *ImageService) GetImage(path string, index int32) (*ImageData, error) {
 	if err != nil {
 		finishDecode()
 		return nil, fmt.Errorf("读取 NPK 文件失败: %w", err)
+	}
+	img, err := npk.ParseIMGAt(file, npkOffset, npkSize)
+	if err != nil {
+		_ = file.Close()
+		finishDecode()
+		return nil, fmt.Errorf("读取 IMG 帧表失败: %w", err)
+	}
+	if index >= int32(len(img.Images)) {
+		_ = file.Close()
+		finishDecode()
+		return nil, nil
 	}
 	decoded, err := npk.DecodeImage(file, npkOffset, npkSize, img, index)
 	_ = file.Close()
@@ -553,14 +562,14 @@ func scanImageNPK(ctx context.Context, directory string, index int, item imageMa
 		if !strings.EqualFold(filepath.Ext(entry.Name), ".img") {
 			continue
 		}
-		img, parseErr := npk.ParseIMGAt(reader, entry.Offset, entry.Size)
+		frameCount, parseErr := npk.ReadIMGFrameCount(reader, entry.Offset, entry.Size)
 		if parseErr != nil {
 			result.skipped++
 			continue
 		}
 		result.imgFiles++
-		result.imageCount += len(img.Images)
-		record := &imageRecord{path: normalizeImagePath(entry.Name), npkRelative: item.Relative, offset: entry.Offset, size: entry.Size, img: img}
+		result.imageCount += int(frameCount)
+		record := &imageRecord{path: normalizeImagePath(entry.Name), npkRelative: item.Relative, offset: entry.Offset, size: entry.Size}
 		if record.path == "" {
 			result.skipped++
 			continue
@@ -751,12 +760,28 @@ func loadImageIndexCacheAt(directory, customPath string) (*imageSnapshot, error)
 			return nil, err
 		}
 	}
-	data, err := os.ReadFile(cachePath)
+	file, err := os.Open(cachePath)
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
+	// Our writer puts version first. Reject legacy caches before decoding their
+	// potentially huge frame tables or allocating a full-file byte buffer.
+	decoder := json.NewDecoder(file)
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return nil, errors.New("无效图像索引缓存")
+	}
+	key, err := decoder.Token()
+	var version int
+	if err != nil || key != "version" || decoder.Decode(&version) != nil || version != imageIndexVersion {
+		return nil, errors.New("图像索引缓存版本不匹配")
+	}
+	if _, err := file.Seek(0, 0); err != nil {
+		return nil, err
+	}
 	var persisted persistedImageIndex
-	if err := json.Unmarshal(data, &persisted); err != nil || persisted.Version != imageIndexVersion || filepath.Clean(persisted.Directory) != filepath.Clean(directory) {
+	if err := json.NewDecoder(file).Decode(&persisted); err != nil || persisted.Version != imageIndexVersion || filepath.Clean(persisted.Directory) != filepath.Clean(directory) {
 		return nil, errors.New("图像索引缓存版本或目录不匹配")
 	}
 	manifest, err := scanImageManifest(directory)
@@ -766,10 +791,10 @@ func loadImageIndexCacheAt(directory, customPath string) (*imageSnapshot, error)
 	byPath := make(map[string]*imageRecord)
 	records := make([]*imageRecord, 0, len(persisted.Images))
 	for _, saved := range persisted.Images {
-		if saved.IMG == nil || saved.Path == "" || saved.NPK == "" {
+		if saved.Path == "" || saved.NPK == "" {
 			continue
 		}
-		record := &imageRecord{path: saved.Path, npkRelative: saved.NPK, offset: saved.EntryOffset, size: saved.EntrySize, img: saved.IMG}
+		record := &imageRecord{path: saved.Path, npkRelative: saved.NPK, offset: saved.EntryOffset, size: saved.EntrySize}
 		records = append(records, record)
 		for _, alias := range imageIndexAliases(saved.Path) {
 			if _, exists := byPath[alias]; !exists {
@@ -784,11 +809,6 @@ func loadImageIndexCacheAt(directory, customPath string) (*imageSnapshot, error)
 	imageCount := persisted.ImageCount
 	if imgFiles == 0 {
 		imgFiles = len(records)
-	}
-	if imageCount == 0 {
-		for _, record := range records {
-			imageCount += len(record.img.Images)
-		}
 	}
 	npkFiles := persisted.NPKFiles
 	if npkFiles == 0 {
@@ -813,7 +833,7 @@ func saveImageIndexCacheAt(snapshot *imageSnapshot, customPath string) error {
 	manifest := append([]imageManifest(nil), snapshot.manifest...)
 	persisted := persistedImageIndex{Version: imageIndexVersion, Directory: snapshot.directory, Manifest: manifest, Images: make([]persistedImageRecord, 0, len(snapshot.records)), NPKFiles: snapshot.npkFiles, IMGFiles: snapshot.imgFiles, ImageCount: snapshot.imageCount, Skipped: snapshot.skipped, Duplicates: snapshot.duplicates}
 	for _, record := range snapshot.records {
-		persisted.Images = append(persisted.Images, persistedImageRecord{Path: record.path, NPK: record.npkRelative, EntryOffset: record.offset, EntrySize: record.size, IMG: record.img})
+		persisted.Images = append(persisted.Images, persistedImageRecord{Path: record.path, NPK: record.npkRelative, EntryOffset: record.offset, EntrySize: record.size})
 	}
 	data, err := json.Marshal(persisted)
 	if err != nil {
