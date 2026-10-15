@@ -137,3 +137,93 @@ func TestParseANIFrameFlagsStayInFrame(t *testing.T) {
 		t.Fatal("global section after frame stopped working")
 	}
 }
+
+func TestParseANISharedImagePath(t *testing.T) {
+	var builder strings.Builder
+	builder.WriteString("[LOOP]\n1\n[FRAME MAX]\n50\n[IMAGE PATH]\n`Item/Title/2012dnf_festival_yellow.img`\n[/IMAGE PATH]\n")
+	for index := 0; index < 50; index++ {
+		fmt.Fprintf(&builder, "[FRAME%03d]\n[IMAGE EX]\n0 %d\n[DELAY]\n80\n", index, index)
+	}
+	document := ParseANI(builder.String())
+	if !document.Valid || !document.Loop || len(document.Frames) != 50 {
+		t.Fatalf("shared image path document = %#v", document)
+	}
+	for index, frame := range document.Frames {
+		if frame.Delay != 80 || len(frame.Layers) != 1 {
+			t.Fatalf("frame %d = %#v", index, frame)
+		}
+		want := Layer{Path: "Item/Title/2012dnf_festival_yellow.img", Index: int32(index)}
+		if frame.Layers[0] != want {
+			t.Fatalf("frame %d layer = %#v, want %#v", index, frame.Layers[0], want)
+		}
+	}
+}
+
+func TestParseANISharedPathsAndMixedLayers(t *testing.T) {
+	document := ParseANI("[FRAME MAX]\n1\n[FRAME000]\n" +
+		"[IMAGE EX]\n1 7\n[IMAGE POS]\n-3 4\n" +
+		"[IMAGE]\n`Item/direct.img` 2\n[IMAGE POS]\n5 -6\n" +
+		"[IMAGE EX]\n0 9\n[IMAGE POS]\n1 2\n[DELAY]\n80\n" +
+		"[IMAGE PATH]\n`Item/first.img`\n`Item/second.img`\n[/IMAGE PATH]\n")
+	if !document.Valid || len(document.Issues) != 0 || len(document.Frames) != 1 {
+		t.Fatalf("mixed document = %#v", document)
+	}
+	want := []Layer{
+		{Path: "Item/second.img", Index: 7, X: -3, Y: 4},
+		{Path: "Item/direct.img", Index: 2, X: 5, Y: -6},
+		{Path: "Item/first.img", Index: 9, X: 1, Y: 2},
+	}
+	got := document.Frames[0].Layers
+	if len(got) != len(want) {
+		t.Fatalf("layers = %#v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("layer %d = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestParseANIRejectsInvalidImageEx(t *testing.T) {
+	for _, test := range []struct {
+		name, paths, reference, message string
+	}{
+		{"missing table", "", "0 1", "路径索引必须"},
+		{"missing index", "`a.img`", "0", "需要路径索引和图片索引"},
+		{"negative path", "`a.img`", "-2 0", "路径索引必须"},
+		{"out of range", "`a.img`", "1 0", "路径索引必须"},
+		{"invalid path", "`a.img`", "x 0", "路径索引必须"},
+		{"overflow path", "`a.img`", "2147483648 0", "路径索引必须"},
+		{"empty path", "``", "0 0", "图片路径不能为空"},
+		{"negative image", "`a.img`", "0 -1", "图片索引必须"},
+		{"invalid image", "`a.img`", "0 x", "图片索引必须"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := ParseANI("[FRAME MAX]\n1\n[IMAGE PATH]\n" + test.paths +
+				"\n[/IMAGE PATH]\n[FRAME000]\n[IMAGE EX]\n" + test.reference + "\n[DELAY]\n80\n")
+			if document.Valid || len(document.Frames) != 1 || len(document.Frames[0].Layers) != 0 {
+				t.Fatalf("invalid reference document = %#v", document)
+			}
+			assertIssue(t, document.Issues, IssueError, test.message)
+		})
+	}
+}
+
+func TestParseANIImageExEmptyFrame(t *testing.T) {
+	for _, paths := range []string{"", "[IMAGE PATH]\n`Effect/WaveAuraEff.img`\n[/IMAGE PATH]\n"} {
+		document := ParseANI("[FRAME MAX]\n2\n" + paths +
+			"[FRAME000]\n[IMAGE EX]\n-1 0\n[IMAGE POS]\n12 0\n[IMAGE RATE]\n0.4124 0.4124\n[DELAY]\n260\n" +
+			"[FRAME001]\n[IMAGE]\n`Effect/WaveAuraEff.img` 16\n[IMAGE POS]\n-507 -631\n[DELAY]\n72\n")
+		if !document.Valid || len(document.Issues) != 0 || len(document.Frames) != 2 {
+			t.Fatalf("empty frame document = %#v", document)
+		}
+		first := document.Frames[0]
+		if first.Delay != 260 || len(first.Layers) != 1 || first.Layers[0] != (Layer{Index: -1, X: 12}) {
+			t.Fatalf("empty frame = %#v", first)
+		}
+		second := document.Frames[1]
+		if second.Delay != 72 || len(second.Layers) != 1 || second.Layers[0] != (Layer{Path: "Effect/WaveAuraEff.img", Index: 16, X: -507, Y: -631}) {
+			t.Fatalf("following frame = %#v", second)
+		}
+	}
+}

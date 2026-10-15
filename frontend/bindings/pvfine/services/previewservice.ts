@@ -3,8 +3,8 @@
 
 /**
  * PreviewService parses structured preview formats from the editor's current
- * text. It intentionally does not read the archive so unsaved edits can be
- * previewed without changing the archive overlay first.
+ * text. The current document uses caller-provided text; archive state supplies
+ * context for related resources without modifying the archive.
  * @module
  */
 
@@ -23,6 +23,15 @@ import * as $models from "./models.js";
  */
 export function ParseANI(text: string): $CancellablePromise<$models.AniPreviewDocument | null> {
     return $Call.ByID(3389020806, text);
+}
+
+/**
+ * ParseANIForFile adds archive context to ANI text preview. Image placeholders
+ * under character/ and aicharacter/ use character.lst directory and
+ * animation-prefix matching.
+ */
+export function ParseANIForFile(fileIndex: number, text: string): $CancellablePromise<$models.AniPreviewDocument | null> {
+    return $Call.ByID(1029112795, fileIndex, text);
 }
 
 /**

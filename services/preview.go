@@ -3,8 +3,8 @@ package services
 import previewmodel "pvfine/internal/preview"
 
 // PreviewService parses structured preview formats from the editor's current
-// text. It intentionally does not read the archive so unsaved edits can be
-// previewed without changing the archive overlay first.
+// text. The current document uses caller-provided text; archive state supplies
+// context for related resources without modifying the archive.
 type PreviewService struct {
 	c *core
 }

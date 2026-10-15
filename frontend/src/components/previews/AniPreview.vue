@@ -282,7 +282,7 @@ function onSpeedChange(value: string | number | null): void {
 async function parseText(text: string, request: number): Promise<void> {
   parserLoading.value = true;
   try {
-    const result = await PreviewService.ParseANI(text);
+    const result = await PreviewService.ParseANIForFile(props.file.index, text);
     if (request !== parseRequest || !result) return;
     parserIssues.value = result.issues ?? [];
     if (!result.valid || !result.frames?.length) {

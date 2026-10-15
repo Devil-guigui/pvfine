@@ -123,6 +123,11 @@ func ParseANI(text string) Document {
 		}
 	}
 
+	var imagePaths []token
+	for _, paths := range global["image path"] {
+		imagePaths = append(imagePaths, paths.values...)
+	}
+
 	frames := make([]Frame, 0, len(blocks))
 	seenFrames := make(map[int32]struct{}, len(blocks))
 	for _, block := range blocks {
@@ -145,9 +150,15 @@ func ParseANI(text string) Document {
 		}
 		for _, part := range block.parts {
 			switch part.name {
-			case "image":
+			case "image", "image ex":
 				flushLayerPosition(part.line)
-				layer, ok := parseImage(part, &issues, block.section.name)
+				var layer Layer
+				var ok bool
+				if part.name == "image ex" {
+					layer, ok = parseImageEx(part, imagePaths, &issues)
+				} else {
+					layer, ok = parseImage(part, &issues, block.section.name)
+				}
 				if !ok {
 					pendingLayer = nil
 					posSet = false
@@ -158,7 +169,7 @@ func ParseANI(text string) Document {
 				posSet = false
 			case "image pos":
 				if pendingLayer == nil {
-					issues = append(issues, Issue{Severity: IssueWarning, Line: part.line, Section: block.section.name, Message: "[IMAGE POS] 没有对应的 [IMAGE]，已忽略"})
+					issues = append(issues, Issue{Severity: IssueWarning, Line: part.line, Section: block.section.name, Message: "[IMAGE POS] 没有对应的 [IMAGE] 或 [IMAGE EX]，已忽略"})
 					continue
 				}
 				if len(part.values) < 2 {
@@ -197,7 +208,7 @@ func ParseANI(text string) Document {
 			issues = append(issues, Issue{Severity: IssueWarning, Line: frameLine, Section: block.section.name, Message: "帧缺少 [DELAY]，使用 100ms"})
 		}
 		if len(frame.Layers) == 0 {
-			issues = append(issues, Issue{Severity: IssueError, Line: frameLine, Section: block.section.name, Message: "帧没有有效的 [IMAGE]"})
+			issues = append(issues, Issue{Severity: IssueError, Line: frameLine, Section: block.section.name, Message: "帧没有有效的 [IMAGE] 或 [IMAGE EX]"})
 		}
 		frames = append(frames, frame)
 	}
@@ -323,7 +334,7 @@ func normalizeSection(value string) string {
 
 func isGlobalSection(name string) bool {
 	switch name {
-	case "loop", "shadow", "frame max":
+	case "loop", "shadow", "frame max", "image path":
 		return true
 	default:
 		return false
@@ -332,7 +343,7 @@ func isGlobalSection(name string) bool {
 
 func isFramePart(name string) bool {
 	switch name {
-	case "image", "image pos", "delay":
+	case "image", "image pos", "delay", "image ex":
 		return true
 	default:
 		return false
@@ -402,6 +413,34 @@ func parseImage(value section, issues *[]Issue, frameName string) (Layer, bool) 
 		return Layer{}, false
 	}
 	return Layer{Path: value.values[0].value, Index: index}, true
+}
+
+func parseImageEx(value section, paths []token, issues *[]Issue) (Layer, bool) {
+	if len(value.values) < 2 {
+		*issues = append(*issues, Issue{Severity: IssueError, Line: value.line, Section: "IMAGE EX", Message: "[IMAGE EX] 需要路径索引和图片索引"})
+		return Layer{}, false
+	}
+	pathIndex, ok := parseInt(value.values[0])
+	// -1 marks a frame with no image, matching the binary ANI decoder.
+	// Keep a layer so IMAGE POS and DELAY still apply to this frame.
+	if ok && pathIndex == -1 {
+		return Layer{Index: -1}, true
+	}
+	if !ok || pathIndex < 0 || int64(pathIndex) >= int64(len(paths)) {
+		*issues = append(*issues, Issue{Severity: IssueError, Line: value.values[0].line, Section: "IMAGE EX", Message: "[IMAGE EX] 路径索引必须为 -1（空图片）或 [IMAGE PATH] 范围内的非负整数"})
+		return Layer{}, false
+	}
+	path := paths[pathIndex].value
+	if strings.TrimSpace(path) == "" {
+		*issues = append(*issues, Issue{Severity: IssueError, Line: paths[pathIndex].line, Section: "IMAGE PATH", Message: "[IMAGE PATH] 图片路径不能为空"})
+		return Layer{}, false
+	}
+	index, ok := parseInt(value.values[1])
+	if !ok || index < 0 {
+		*issues = append(*issues, Issue{Severity: IssueError, Line: value.values[1].line, Section: "IMAGE EX", Message: "图片索引必须是非负整数"})
+		return Layer{}, false
+	}
+	return Layer{Path: path, Index: index}, true
 }
 
 func parseInt(value token) (int32, bool) {
