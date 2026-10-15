@@ -1042,7 +1042,7 @@ export const useEditorStore = defineStore("editor", () => {
 
   async function refreshAnnotations() {
     await Promise.all(
-      allFiles.value.filter((tab) => !tab.loading && !tab.loadError).map(async (tab) => {
+      allFiles.value.filter((tab) => !tab.loading && !tab.loadError && tab.index >= 0 && tab.index !== COMPARE_TAB_INDEX).map(async (tab) => {
         const text = tab.text;
         const annotations = (await EditorService.GetAnnotationsForText(tab.index, text)) ?? [];
         const current = allFiles.value.find((item) => item.index === tab.index);
@@ -1055,7 +1055,7 @@ export const useEditorStore = defineStore("editor", () => {
   /** 重新读取当前 renderer 生成的文本,但保留已修改标签的脏基线。 */
   async function refreshRenderedText() {
     await Promise.all(
-      allFiles.value.filter((tab) => !tab.loading && !tab.loadError).map(async (tab) => {
+      allFiles.value.filter((tab) => !tab.loading && !tab.loadError && tab.index >= 0 && tab.index !== COMPARE_TAB_INDEX).map(async (tab) => {
         const meta = await EditorService.GetFile(tab.index);
         const current = allFiles.value.find((item) => item.index === tab.index);
         if (!current || !meta) return;
@@ -1192,7 +1192,7 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   async function refreshOpenTabTags(): Promise<void> {
-    const currentTabs = tabs.value.filter((tab) => !tab.loading && !tab.loadError);
+    const currentTabs = tabs.value.filter((tab) => !tab.loading && !tab.loadError && tab.index >= 0 && tab.index !== COMPARE_TAB_INDEX);
     await Promise.all(
       currentTabs.map(async (tab) => {
         const meta = await EditorService.GetFile(tab.index).catch(() => null);

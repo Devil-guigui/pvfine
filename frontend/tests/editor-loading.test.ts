@@ -259,3 +259,13 @@ test("规则刷新按未保存文本重算标注并保留草稿", async () => {
   await store.refreshAnnotations();
   expect(api.GetAnnotationsForText).toHaveBeenLastCalledWith(1, "draft\n[name]\n123");
 });
+
+test("对比 Tab 开启时不调用 GetFile(-999)", async () => {
+  const store = useEditorStore();
+  store.openCompareTab();
+  expect(store.tabs.some((t) => t.index === -999)).toBe(true);
+  await store.refreshRenderedText();
+  await store.refreshAnnotations();
+  expect(api.GetFile).not.toHaveBeenCalledWith(-999);
+  expect(api.GetAnnotationsForText).not.toHaveBeenCalledWith(-999, expect.anything());
+});
