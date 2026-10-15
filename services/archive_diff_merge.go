@@ -282,8 +282,20 @@ func (s *ArchiveDiffService) updateSessionAfterMerge(id string, mergedPaths []st
 	if err != nil || p.changes == nil {
 		return
 	}
+	if p.drafts != nil {
+		for _, mp := range mergedPaths {
+			delete(p.drafts, pvfversion.CanonicalPath(mp))
+		}
+	}
 	if stage != nil {
 		p.current = stage
+		if p.current != nil && len(p.drafts) > 0 {
+			for canonicalKey, draft := range p.drafts {
+				if idx, ok := p.current.Find(canonicalKey); ok {
+					_ = p.current.SetText(idx, draft.Text)
+				}
+			}
+		}
 	}
 
 	mergedSet := make(map[string]bool, len(mergedPaths))

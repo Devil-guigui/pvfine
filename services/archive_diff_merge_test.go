@@ -229,3 +229,78 @@ func TestArchiveDiffPartialSavePreservesRemainingDiff(t *testing.T) {
 		t.Fatalf("expected etc/test.etc to be removed from diff list, got %+v", flatAfter)
 	}
 }
+
+func TestArchiveDiffMergeOneFilePreservesOtherDrafts(t *testing.T) {
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "base.pvf")
+	pathB := filepath.Join(dir, "other.pvf")
+
+	a := pvf.New()
+	if _, err := a.AddFileText("etc/file1.etc", "[name]\n`file1_orig`\n", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AddFileText("etc/file2.etc", "[name]\n`file2_orig`\n", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SaveAs(pathA); err != nil {
+		t.Fatal(err)
+	}
+
+	b := pvf.New()
+	if _, err := b.AddFileText("etc/file1.etc", "[name]\n`file1_other`\n", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.AddFileText("etc/file2.etc", "[name]\n`file2_other`\n", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SaveAs(pathB); err != nil {
+		t.Fatal(err)
+	}
+
+	core := NewCore()
+	openA, err := pvf.Open(pathA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := core.setArchive(openA); err != nil {
+		t.Fatal(err)
+	}
+	defer core.closeArchive()
+
+	diffService := NewArchiveDiffService(core)
+	f1Idx, _ := core.archive.Find("etc/file1.etc")
+	f2Idx, _ := core.archive.Find("etc/file2.etc")
+	// 传入 file1 和 file2 的编辑器草稿
+	status, err := diffService.Start(ArchiveDiffRequest{
+		Path: pathB,
+		Drafts: []ArchiveDiffDraft{
+			{FileIndex: f1Idx, Path: "etc/file1.etc", Text: "[name]\n`file1_draft`\n"},
+			{FileIndex: f2Idx, Path: "etc/file2.etc", Text: "[name]\n`file2_draft`\n"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50; i++ {
+		s, _ := diffService.Status(status.ID)
+		if s.State == "ready" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// 合并 file1
+	_, err = diffService.MergeFiles(status.ID, []string{"etc/file1.etc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 获取 file2 的详情，验证 file2 的对比底稿仍为 file2_draft，而不是回退成磁盘的 file2_orig
+	detail2, err := diffService.FileDiff(status.ID, "etc/file2.etc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(detail2.AfterText, "file2_draft") {
+		t.Fatalf("expected file2 AfterText to preserve draft file2_draft, got: %q", detail2.AfterText)
+	}
+}

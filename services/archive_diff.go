@@ -75,6 +75,7 @@ type archiveDiffSession struct {
 	filteredChildren map[string]map[string][]ArchiveDiffNode
 	detail           *ArchiveDiffFile
 	detailLimit      int32
+	drafts           map[string]ArchiveDiffDraft
 }
 
 var archiveDiffSequence atomic.Uint64
@@ -134,9 +135,17 @@ func (s *ArchiveDiffService) Start(request ArchiveDiffRequest) (*ArchiveDiffStat
 	}
 	stage := a.CloneForBatch()
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &archiveDiffSession{cancel: cancel, status: ArchiveDiffStatus{
-		ID: fmt.Sprint(archiveDiffSequence.Add(1)), State: "loading", CurrentPath: a.SourcePath(), OtherPath: request.Path,
-	}}
+	draftsMap := make(map[string]ArchiveDiffDraft, len(request.Drafts))
+	for _, draft := range request.Drafts {
+		draftsMap[pvfversion.CanonicalPath(draft.Path)] = draft
+	}
+	p := &archiveDiffSession{
+		cancel: cancel,
+		status: ArchiveDiffStatus{
+			ID: fmt.Sprint(archiveDiffSequence.Add(1)), State: "loading", CurrentPath: a.SourcePath(), OtherPath: request.Path,
+		},
+		drafts: draftsMap,
+	}
 	s.mu.Lock()
 	if s.session != nil {
 		s.session.cancel()
