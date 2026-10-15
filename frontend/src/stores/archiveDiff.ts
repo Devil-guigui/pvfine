@@ -330,11 +330,12 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   }
 
   async function selectArchive() {
+    visible.value = true;
     const token = epoch;
     selecting.value = true;
     try {
       const path = await ArchiveDiffService.SelectArchive();
-      if (token !== epoch || !visible.value || !path) return;
+      if (token !== epoch || !path) return;
       otherPath.value = path;
       selecting.value = false;
       await refresh();
@@ -607,9 +608,22 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     }
   }
 
+  async function onArchiveReloaded() {
+    if (otherPath.value) {
+      if (busy.value) {
+        await cancel();
+      }
+      await refresh();
+    } else {
+      clearResult();
+    }
+  }
+
   Events.On("archive:opened", close);
   Events.On("archive:closed", close);
-  Events.On("archive:reloaded", close);
+  Events.On("archive:reloaded", () => {
+    void onArchiveReloaded();
+  });
 
   return {
     visible, otherPath, reverse, status, tree, file, activeNode, displayedFile, selectedKeys, expandedKeys,

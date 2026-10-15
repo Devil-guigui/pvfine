@@ -11,7 +11,7 @@
  *
  * @author flobit
  */
-import { computed, h, ref, watch, type VNode } from "vue";
+import { computed, h, onMounted, ref, watch, type VNode } from "vue";
 import {
   ArrowClockwise20Regular,
   ArrowCollapseAll20Regular,
@@ -63,6 +63,10 @@ const settings = useSettingsStore();
 const exporter = useExportStore();
 const message = useMessage();
 
+onMounted(() => {
+  diff.open();
+});
+
 const handledClickEvents = new WeakSet<MouseEvent>();
 const directoryToggleKeys = new Set<string>();
 
@@ -70,10 +74,12 @@ const directoryToggleKeys = new Set<string>();
 const isHeaderCollapsed = ref(false);
 
 watch(
-  () => diff.status?.state,
-  (state) => {
-    if (state === "ready" && diff.tree.length > 0) {
+  () => [diff.status?.state, diff.tree.length] as const,
+  ([state, treeLen]) => {
+    if (state === "ready" && treeLen > 0) {
       isHeaderCollapsed.value = true;
+    } else if (state !== "ready" || treeLen === 0) {
+      isHeaderCollapsed.value = false;
     }
   }
 );
@@ -342,7 +348,7 @@ function switchToListMode(mode: "tree" | "flat") {
 <template>
   <div class="compare-workbench-root">
     <!-- 顶部配置栏 (支持折叠收起) -->
-    <div v-show="!isHeaderCollapsed" class="compare-header-bar">
+    <div v-show="!isHeaderCollapsed || diff.status?.state !== 'ready'" class="compare-header-bar">
       <!-- 本地归档展示 -->
       <div class="header-archive-side header-archive-side--local" :title="archive.info?.path || '当前工作区'">
         <span class="role-pill role-pill--local">本地当前</span>
@@ -448,7 +454,7 @@ function switchToListMode(mode: "tree" | "flat") {
     </div>
 
     <!-- 当配置栏收起时呈现的极简状态条 (高 28px) -->
-    <div v-if="diff.status && isHeaderCollapsed" class="compare-mini-summary-bar">
+    <div v-if="diff.status?.state === 'ready' && isHeaderCollapsed" class="compare-mini-summary-bar">
       <div class="mini-bar-left">
         <span class="mini-role-pill mini-role-pill--local">基准</span>
         <span class="mini-filename">{{ archiveName(oldPath || '') }}</span>

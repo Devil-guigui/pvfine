@@ -103,3 +103,25 @@ test("筛选后勾选目录仅选择匹配项，不包含隐藏文件", async ()
   expect(store.isDirSelected("equipment/weapon", 2)).toBe(true);
   expect(store.isDirIndeterminate("equipment", 5)).toBe(true);
 });
+test("归档重载后若已配置目标则自动刷新对比，未配置时保留页面选档能力", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+  expect(mocks.Start).toHaveBeenCalledTimes(1);
+
+  // 触发归档重载事件：若已配置对比目标，自动刷新比较
+  mocks.events.get("archive:reloaded")?.();
+  await vi.waitFor(() => expect(mocks.Start).toHaveBeenCalledTimes(2));
+  expect(store.otherPath).toBe("other.pvf");
+  expect(store.status?.state).toBe("ready");
+
+  // 若关闭后在残留页面重新选档，选档不受中断影响且正常恢复比较
+  store.close();
+  expect(store.visible).toBe(false);
+  mocks.SelectArchive.mockResolvedValue("new_target.pvf");
+  await store.selectArchive();
+  expect(store.visible).toBe(true);
+  expect(store.otherPath).toBe("new_target.pvf");
+  expect(mocks.Start).toHaveBeenCalledTimes(3);
+});
