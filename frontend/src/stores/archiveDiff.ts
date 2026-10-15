@@ -458,8 +458,9 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
       const result = await ArchiveDiffService.FileDiff(id, node.path);
       if (token === fileEpoch && sessionEpoch === epoch) {
         file.value = result;
-        const oriented = orientArchiveDiff(result, reverse.value);
-        const baseTxt = oriented?.afterText ?? "";
+        orientArchiveDiff(result, reverse.value);
+        // 可编辑底稿始终取本地工作区归档的文本（result.afterText），避免反向对比时取错对比侧覆盖本地内容
+        const baseTxt = result?.afterText ?? "";
         setDraft(node.path, baseTxt, baseTxt);
       }
     } catch (err) {

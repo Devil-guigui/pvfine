@@ -180,8 +180,15 @@ function copyPath(): void {
   message.success("已复制文件路径");
 }
 
+const localExists = computed(() => (props.reverse ? props.file?.beforeExists : props.file?.afterExists));
+const otherExists = computed(() => (props.reverse ? props.file?.afterExists : props.file?.beforeExists));
+const localSize = computed(() => (props.reverse ? props.file?.beforeSize ?? 0 : props.file?.afterSize ?? 0));
+const otherSize = computed(() => (props.reverse ? props.file?.afterSize ?? 0 : props.file?.beforeSize ?? 0));
+const localText = computed(() => (props.reverse ? props.file?.beforeText : props.file?.afterText));
+const otherText = computed(() => (props.reverse ? props.file?.afterText : props.file?.beforeText));
+
 const canOpenInEditor = computed(() => {
-  return archiveStore.open && !!props.file?.afterExists;
+  return archiveStore.open && !!localExists.value;
 });
 
 async function openInEditor(): Promise<void> {
@@ -260,8 +267,8 @@ function initMergeView(): void {
     return;
   }
 
-  const baseDoc = normalizeText(diffStore.draftText || props.file.afterText || "");
-  const targetDoc = normalizeText(props.file.beforeText || "");
+  const baseDoc = normalizeText(diffStore.draftText || localText.value || "");
+  const targetDoc = normalizeText(otherText.value || "");
   const themeExt = createEditorTheme();
 
   const commonExtensions = [
@@ -403,7 +410,7 @@ function handleGlobalKeydown(e: KeyboardEvent): void {
 }
 
 watch(
-  () => [props.file?.path, props.file?.beforeText, props.file?.afterText],
+  () => [props.file?.path, props.file?.beforeText, props.file?.afterText, props.reverse],
   () => {
     void nextTick(() => {
       initMergeView();
@@ -438,7 +445,7 @@ onBeforeUnmount(() => {
       <div class="toolbar-side toolbar-side--left">
         <span class="column-badge column-badge--local" title="当前归档 (可编辑侧)">当前归档</span>
         <span class="file-path-text" :title="props.file.path">{{ props.file.path }}</span>
-        <span class="file-size-badge">{{ formatSize(props.file.afterSize) }}</span>
+        <span class="file-size-badge">{{ formatSize(localSize) }}</span>
 
         <div class="side-actions-group">
           <NTooltip v-if="canOpenInEditor" trigger="hover">
@@ -546,7 +553,7 @@ onBeforeUnmount(() => {
       <div class="toolbar-side toolbar-side--right">
         <span class="column-badge column-badge--target" title="对比归档 (只读侧)">对比归档</span>
         <span class="file-path-text" :title="props.file.path">{{ props.file.path }}</span>
-        <span class="file-size-badge">{{ formatSize(props.file.beforeSize) }}</span>
+        <span class="file-size-badge">{{ formatSize(otherSize) }}</span>
 
         <div class="side-actions-group">
           <NTooltip trigger="hover">

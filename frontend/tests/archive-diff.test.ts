@@ -33,6 +33,9 @@ test("默认另一份归档为基准，反向交换新增删除和所有详情�
   expect(mocks.Start).toHaveBeenCalledTimes(1);
   expect(diffOperation("modify", true)).toBe("modify");
   expect(orientArchiveDiff(orientArchiveDiff(file, true), true)).toEqual(file);
+  // 反向对比下重新打开文件，可编辑草稿仍取本地工作区内容（afterText），不被对比侧覆盖
+  await store.openFile({ path: "a.equ", name: "a.equ", isDir: false, operation: "add", count: 1 });
+  expect(store.draftText).toBe("new");
 });
 test("选择归档后生成差异树，草稿传递且选择状态结束", async () => {
   const store = useArchiveDiffStore(); store.open(); mocks.SelectArchive.mockResolvedValue("other.pvf");
