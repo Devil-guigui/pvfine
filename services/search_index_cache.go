@@ -153,6 +153,8 @@ func loadSearchIndexCache(a *pvf.Archive, specs []searchableListSpec, override s
 	if err != nil {
 		return searchIndexCacheSnapshot{}, err
 	}
+	release := holdCachePaths(path, filepath.Dir(path))
+	defer release()
 	file, err := os.Open(path)
 	if err != nil {
 		return searchIndexCacheSnapshot{}, err
@@ -228,6 +230,8 @@ func saveSearchIndexCache(snapshot searchIndexCacheSnapshot, override string) er
 	if err != nil {
 		return err
 	}
+	release := holdCachePaths(path, filepath.Dir(path))
+	defer release()
 	data := persistedSearchIndex{
 		Version:          searchIndexCacheVersion,
 		ArchivePath:      snapshot.Identity.ArchivePath,
@@ -366,6 +370,8 @@ func (c *core) persistCurrentSQLiteIndexAsync() {
 		c.mu.Unlock()
 		return
 	}
+	finishIO := holdCachePaths(filepath.Dir(target))
+	defer finishIO()
 	index.dbMu.Lock()
 	defer index.dbMu.Unlock()
 	if _, err := index.db.Exec(`UPDATE meta SET value=? WHERE key='identity'`, identity); err != nil {
@@ -389,6 +395,10 @@ func (c *core) persistCurrentSQLiteIndexAsync() {
 	}
 	if err == nil {
 		index.identity = identity
+		if index.releaseCache != nil {
+			index.releaseCache()
+		}
+		index.releaseCache = holdCachePaths(target)
 	}
 	c.mu.Unlock()
 }

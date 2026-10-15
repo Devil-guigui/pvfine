@@ -19,6 +19,8 @@ const (
 	ThemeLight               = "light"
 	ThemeSystem              = "system"
 
+	DefaultCacheLimitGiB = 10
+
 	DefaultMaxEditableSizeMB = 8
 	maxEditableSizeMB        = 1024
 
@@ -28,6 +30,8 @@ const (
 )
 
 type AppSettings struct {
+	// CacheLimitGiB is the soft disk budget; zero disables automatic eviction.
+	CacheLimitGiB          int    `json:"cacheLimitGiB"`
 	AnnotationTagPlacement string `json:"annotationTagPlacement"`
 	ExplorerOpenMode       string `json:"explorerOpenMode"`
 	VimMode                bool   `json:"vimMode"`
@@ -49,6 +53,7 @@ type AppSettings struct {
 
 func DefaultAppSettings() AppSettings {
 	return AppSettings{
+		CacheLimitGiB:           DefaultCacheLimitGiB,
 		AnnotationTagPlacement:  AnnotationTagAfterTarget,
 		ExplorerOpenMode:        ExplorerOpenSingleClick,
 		VimMode:                 false,
@@ -123,7 +128,11 @@ func (s *SettingsService) getSettingsLocked() (AppSettings, error) {
 func (s *SettingsService) SaveSettings(settings AppSettings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.saveSettingsLocked(settings)
+	err := s.saveSettingsLocked(settings)
+	if err == nil {
+		requestCacheMaintenance()
+	}
+	return err
 }
 
 func (s *SettingsService) saveSettingsLocked(settings AppSettings) error {
@@ -218,6 +227,9 @@ func normalizeSettings(settings AppSettings) AppSettings {
 }
 
 func validateSettings(settings AppSettings) error {
+	if settings.CacheLimitGiB < 0 || settings.CacheLimitGiB > 10240 {
+		return fmt.Errorf("缓存上限需在 0-10240 GiB 之间（0 表示不限制）")
+	}
 	if settings.MaxEditableSizeMB < 1 || settings.MaxEditableSizeMB > maxEditableSizeMB {
 		return fmt.Errorf("大文件编辑阈值需在 1-%d MB 之间", maxEditableSizeMB)
 	}

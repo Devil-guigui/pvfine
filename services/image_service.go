@@ -690,6 +690,8 @@ func loadImageIndexCacheAt(directory, customPath string) (*imageSnapshot, error)
 			return nil, err
 		}
 	}
+	release := holdCachePaths(cachePath, filepath.Dir(cachePath))
+	defer release()
 	file, err := os.Open(cachePath)
 	if err != nil {
 		return nil, err
@@ -760,6 +762,8 @@ func saveImageIndexCacheAt(snapshot *imageSnapshot, customPath string) error {
 			return err
 		}
 	}
+	release := holdCachePaths(cachePath, filepath.Dir(cachePath))
+	defer release()
 	manifest := append([]imageManifest(nil), snapshot.manifest...)
 	persisted := persistedImageIndex{Version: imageIndexVersion, Directory: snapshot.directory, Manifest: manifest, Images: make([]persistedImageRecord, 0, len(snapshot.records)), NPKFiles: snapshot.npkFiles, IMGFiles: snapshot.imgFiles, ImageCount: snapshot.imageCount, Skipped: snapshot.skipped, Duplicates: snapshot.duplicates}
 	for _, record := range snapshot.records {

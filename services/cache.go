@@ -1,11 +1,13 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // CacheService reports and clears the caches the application keeps for itself:
@@ -15,8 +17,11 @@ import (
 // never remove configuration, bookmarks or file sets (those live in the user
 // config directory).
 type CacheService struct {
-	c        *core
-	settings *SettingsService
+	maintenanceMu sync.Mutex
+	cancel        context.CancelFunc
+	done          chan struct{}
+	c             *core
+	settings      *SettingsService
 
 	// rootOverride is only set by tests.
 	rootOverride string
@@ -33,9 +38,14 @@ func newCacheServiceWithRoot(c *core, settings *SettingsService, root string) *C
 
 // CacheUsage is the disk footprint reported to the settings page.
 type CacheUsage struct {
-	Path       string `json:"path"`
-	Files      int    `json:"files"`
-	TotalBytes int64  `json:"totalBytes"`
+	LimitBytes       int64  `json:"limitBytes"`
+	IndexBytes       int64  `json:"indexBytes"`
+	BackupBytes      int64  `json:"backupBytes"`
+	ReclaimableBytes int64  `json:"reclaimableBytes"`
+	OverBudget       bool   `json:"overBudget"`
+	Path             string `json:"path"`
+	Files            int    `json:"files"`
+	TotalBytes       int64  `json:"totalBytes"`
 	// InUseBytes covers the indexes the running session holds open. They are
 	// rebuilt once the archive is closed, so a clear pass has to skip them.
 	InUseBytes int64 `json:"inUseBytes"`
@@ -55,9 +65,16 @@ func (s *CacheService) Usage() (CacheUsage, error) {
 	}
 	usage := CacheUsage{Path: root}
 	inUse := s.inUsePaths()
+	cacheLeases.Lock()
+	inUse = append(inUse, leasedCachePathsLocked()...)
+	cacheLeases.Unlock()
+	backups := s.autosaveSlotFiles()
 	if err := walkCacheRoot(root, func(path string, info fs.FileInfo) {
 		usage.Files++
 		usage.TotalBytes += info.Size()
+		if pathInUse(path, backups) {
+			usage.BackupBytes += info.Size()
+		}
 		if pathInUse(path, inUse) {
 			usage.InUseBytes += info.Size()
 		}
@@ -73,6 +90,22 @@ func (s *CacheService) Usage() (CacheUsage, error) {
 		}
 		usage.Files++
 		usage.TotalBytes += info.Size()
+		usage.BackupBytes += info.Size()
+	}
+	usage.IndexBytes = usage.TotalBytes - usage.BackupBytes
+	if s.settings != nil {
+		settings, err := s.settings.GetSettings()
+		if err != nil {
+			return CacheUsage{}, err
+		}
+		usage.LimitBytes = int64(settings.CacheLimitGiB) << 30
+	}
+	usage.OverBudget = usage.LimitBytes > 0 && usage.TotalBytes > usage.LimitBytes
+	protected := append(inUse, backups...)
+	for _, unit := range collectCacheUnits(root) {
+		if !unitProtected(unit, protected) {
+			usage.ReclaimableBytes += unit.size
+		}
 	}
 	return usage, nil
 }
@@ -80,11 +113,16 @@ func (s *CacheService) Usage() (CacheUsage, error) {
 // Clear deletes every cache entry it can, leaving indexes that are still in use
 // by the running session in place.
 func (s *CacheService) Clear() (CacheClearResult, error) {
+	s.maintenanceMu.Lock()
+	defer s.maintenanceMu.Unlock()
 	root, err := s.cacheRoot()
 	if err != nil {
 		return CacheClearResult{}, err
 	}
+	outerBackups := s.outerAutosaveFiles(root)
 	inUse := s.inUsePaths()
+	cacheLeases.Lock()
+	inUse = append(inUse, leasedCachePathsLocked()...)
 	freed := int64(0)
 	if err := walkCacheRoot(root, func(path string, info fs.FileInfo) {
 		if pathInUse(path, inUse) {
@@ -94,10 +132,11 @@ func (s *CacheService) Clear() (CacheClearResult, error) {
 			freed += info.Size()
 		}
 	}); err != nil {
+		cacheLeases.Unlock()
 		return CacheClearResult{}, err
 	}
 	pruneEmptyCacheDirs(root, inUse)
-	for _, path := range s.outerAutosaveFiles(root) {
+	for _, path := range outerBackups {
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() {
 			continue
@@ -106,6 +145,7 @@ func (s *CacheService) Clear() (CacheClearResult, error) {
 			freed += info.Size()
 		}
 	}
+	cacheLeases.Unlock()
 	usage, err := s.Usage()
 	if err != nil {
 		return CacheClearResult{}, err

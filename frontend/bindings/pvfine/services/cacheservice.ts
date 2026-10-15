@@ -28,6 +28,14 @@ export function Clear(): $CancellablePromise<$models.CacheClearResult> {
 }
 
 /**
+ * EnforceBudget applies the shared soft budget, retaining all live leases and
+ * recovery backups. Once exceeded, it aims for 80% to avoid repeated small IO.
+ */
+export function EnforceBudget(): $CancellablePromise<$models.CacheClearResult> {
+    return $Call.ByID(971869066);
+}
+
+/**
  * Usage sums the cache without changing anything.
  */
 export function Usage(): $CancellablePromise<$models.CacheUsage> {

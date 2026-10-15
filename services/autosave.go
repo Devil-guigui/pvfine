@@ -146,6 +146,7 @@ func (s *AutosaveService) CreateSnapshot() error {
 		return errors.New("定时缓存正在写入,请稍后再试")
 	}
 	defer s.running.Store(false)
+	defer requestCacheMaintenance()
 
 	cachePath, err := s.cachePath()
 	if err != nil {

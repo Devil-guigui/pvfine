@@ -7,8 +7,15 @@ import (
 	"time"
 )
 
-func TestAdvancedCacheKeepsNewestOversizedIndex(t *testing.T) {
-	root := t.TempDir()
+func TestSharedBudgetEvictsWholeAdvancedIndex(t *testing.T) {
+	cacheRoot, _, settings := newCacheFixture(t)
+	root := filepath.Join(cacheRoot, "advanced-search")
+	config := DefaultAppSettings()
+	config.CacheLimitGiB = 4
+	config.AutosavePath = filepath.Join(cacheRoot, "autosave.pvf")
+	if err := settings.SaveSettings(config); err != nil {
+		t.Fatal(err)
+	}
 	old := filepath.Join(root, "refs-v2-old")
 	latest := filepath.Join(root, "refs-v3-latest")
 	for i, dir := range []string{old, latest} {
@@ -37,7 +44,12 @@ func TestAdvancedCacheKeepsNewestOversizedIndex(t *testing.T) {
 	if err := os.Link(filepath.Join(old, "index.db"), filepath.Join(active, "index.db")); err != nil {
 		t.Fatal(err)
 	}
-	pruneAdvancedCaches(root)
+	release := holdCachePaths(latest, active)
+	defer release()
+	service := newCacheServiceWithRoot(NewCore(), settings, cacheRoot)
+	if _, err := service.EnforceBudget(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatal("older oversized cache was not evicted")
 	}

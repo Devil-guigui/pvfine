@@ -19,6 +19,7 @@ export const minAutosaveIntervalMinutes = 1;
 export const maxAutosaveIntervalMinutes = 120;
 
 const defaultSettings: AppSettings = {
+  cacheLimitGiB: 10,
   annotationTagPlacement: "after-target",
   explorerOpenMode: "single-click",
   vimMode: false,
@@ -48,6 +49,7 @@ export const useSettingsStore = defineStore("settings", () => {
   const autosaveIntervalSeconds = ref(defaultAutosaveIntervalSeconds);
   const shortcutOverrides = ref<ShortcutOverrides>({});
   const maxEditableSizeMB = ref(defaultMaxEditableSizeMB);
+  const cacheLimitGiB = ref(10);
 
   /** 当前设置的全量快照,避免每次保存都手写所有字段。 */
   function currentSettings(overrides: Partial<AppSettings> = {}): AppSettings {
@@ -63,6 +65,7 @@ export const useSettingsStore = defineStore("settings", () => {
       autosaveIntervalSeconds: autosaveIntervalSeconds.value,
       shortcutOverrides: shortcutOverrides.value,
       maxEditableSizeMB: maxEditableSizeMB.value,
+      cacheLimitGiB: cacheLimitGiB.value,
       ...overrides,
     };
   }
@@ -82,6 +85,7 @@ export const useSettingsStore = defineStore("settings", () => {
       autosaveIntervalSeconds.value = normalizeAutosaveInterval(settings.autosaveIntervalSeconds);
       shortcutOverrides.value = normalizeShortcutOverrides(settings.shortcutOverrides);
       maxEditableSizeMB.value = normalizeMaxEditableSizeMB(settings.maxEditableSizeMB);
+      cacheLimitGiB.value = settings.cacheLimitGiB ?? 10;
     } catch (error) {
       console.error("load settings failed", error);
       annotationTagPlacement.value = "after-target";
@@ -132,6 +136,10 @@ export const useSettingsStore = defineStore("settings", () => {
     await saveSettings(currentSettings({ autosaveIntervalSeconds: seconds }));
   }
 
+  async function saveCacheLimitGiB(value: number) {
+    await saveSettings(currentSettings({ cacheLimitGiB: value }));
+  }
+
   async function saveMaxEditableSizeMB(value: number) {
     await saveSettings(currentSettings({ maxEditableSizeMB: value }));
   }
@@ -171,6 +179,7 @@ export const useSettingsStore = defineStore("settings", () => {
     const previousAutosavePath = autosavePath.value;
     const previousAutosaveInterval = autosaveIntervalSeconds.value;
     const previousShortcutOverrides = shortcutOverrides.value;
+    const previousCacheLimitGiB = cacheLimitGiB.value;
     const previousMaxEditableSizeMB = maxEditableSizeMB.value;
     annotationTagPlacement.value = normalizePlacement(next.annotationTagPlacement);
     explorerOpenMode.value = normalizeExplorerOpenMode(next.explorerOpenMode);
@@ -183,6 +192,7 @@ export const useSettingsStore = defineStore("settings", () => {
     autosaveIntervalSeconds.value = normalizeAutosaveInterval(next.autosaveIntervalSeconds);
     shortcutOverrides.value = normalizeShortcutOverrides(next.shortcutOverrides);
     maxEditableSizeMB.value = normalizeMaxEditableSizeMB(next.maxEditableSizeMB);
+    cacheLimitGiB.value = next.cacheLimitGiB;
     saving.value = true;
     try {
       await SettingsService.SaveSettings({
@@ -201,6 +211,7 @@ export const useSettingsStore = defineStore("settings", () => {
       autosaveIntervalSeconds.value = previousAutosaveInterval;
       shortcutOverrides.value = previousShortcutOverrides;
       maxEditableSizeMB.value = previousMaxEditableSizeMB;
+      cacheLimitGiB.value = previousCacheLimitGiB;
       throw error;
     } finally {
       saving.value = false;
@@ -234,6 +245,8 @@ export const useSettingsStore = defineStore("settings", () => {
     shortcutOverrides,
     maxEditableSizeMB,
     saveMaxEditableSizeMB,
+    cacheLimitGiB,
+    saveCacheLimitGiB,
     load,
     savePlacement,
     saveExplorerOpenMode,

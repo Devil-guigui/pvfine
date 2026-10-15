@@ -49,29 +49,30 @@ type advancedDiskQuery struct {
 // This lets close/edit obtain core.mu between scanner steps instead of waiting
 // for a whole archive scan or SQLite sort.
 type advancedSQLite struct {
-	mu           sync.Mutex
-	ctx          context.Context
-	cancel       context.CancelFunc
-	dir          string
-	cachePath    string
-	queryBudget  int64 // zero uses the default; injectable for storage-failure tests
-	db           *sql.DB
-	shards       int
-	ready        bool
-	queries      map[uint64]*advancedDiskQuery
-	clock        uint64
-	closed       chan struct{}
-	closeOnce    sync.Once
-	published    atomic.Bool
-	epoch        uint64 // core.mu protects epoch, pendingIDs and activeCancel
-	pendingIDs   map[uint64]struct{}
-	activeCancel context.CancelFunc
-	requestCtx   context.Context // d.mu protects request context and projection state
-	indexedEpoch uint64
-	entries      []uint64
-	poolState    pvf.StringPoolState
-	overlay      bool
-	mutable      bool
+	cacheReleases []func()
+	mu            sync.Mutex
+	ctx           context.Context
+	cancel        context.CancelFunc
+	dir           string
+	cachePath     string
+	queryBudget   int64 // zero uses the default; injectable for storage-failure tests
+	db            *sql.DB
+	shards        int
+	ready         bool
+	queries       map[uint64]*advancedDiskQuery
+	clock         uint64
+	closed        chan struct{}
+	closeOnce     sync.Once
+	published     atomic.Bool
+	epoch         uint64 // core.mu protects epoch, pendingIDs and activeCancel
+	pendingIDs    map[uint64]struct{}
+	activeCancel  context.CancelFunc
+	requestCtx    context.Context // d.mu protects request context and projection state
+	indexedEpoch  uint64
+	entries       []uint64
+	poolState     pvf.StringPoolState
+	overlay       bool
+	mutable       bool
 }
 
 func (d *advancedSQLite) close() {
@@ -86,6 +87,10 @@ func (d *advancedSQLite) close() {
 		if d.dir != "" {
 			_ = os.RemoveAll(d.dir)
 		}
+		for _, release := range d.cacheReleases {
+			release()
+		}
+		d.cacheReleases = nil
 		close(d.closed)
 	})
 }
@@ -291,6 +296,8 @@ func (d *advancedSQLite) build(c *core, a *pvf.Archive) error {
 		return err
 	}
 	root = filepath.Join(root, "pvfine", "advanced-search")
+	finishIO := holdCachePaths(root)
+	defer finishIO()
 	if err = os.MkdirAll(root, 0700); err != nil {
 		return err
 	}
@@ -299,6 +306,7 @@ func (d *advancedSQLite) build(c *core, a *pvf.Archive) error {
 		return err
 	}
 
+	d.cacheReleases = append(d.cacheReleases, holdCachePaths(d.dir))
 	c.mu.RLock()
 	if c.advancedDisk != d || c.archive != a || d.ctx.Err() != nil {
 		c.mu.RUnlock()
@@ -311,6 +319,7 @@ func (d *advancedSQLite) build(c *core, a *pvf.Archive) error {
 		// Schema/rule version is part of the filename; modified archives only use
 		// session files and can never be published as a clean cached index.
 		d.cachePath = filepath.Join(root, "refs-v4-"+digest)
+		d.cacheReleases = append(d.cacheReleases, holdCachePaths(d.cachePath))
 		if d.restoreCache() {
 			d.ready = true
 			if err := d.captureBaseline(c, a); err != nil {
@@ -494,7 +503,7 @@ func (d *advancedSQLite) build(c *core, a *pvf.Archive) error {
 		if e := d.publishCache(root); e != nil && !os.IsExist(e) {
 			log.Printf("[pvfine:advanced] cache publication unavailable; using session index")
 		}
-		pruneAdvancedCaches(root)
+		requestCacheMaintenance()
 	}
 	d.ready = true
 	if err := d.captureBaseline(c, a); err != nil {

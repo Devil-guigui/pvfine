@@ -690,6 +690,7 @@ func (c *core) bindRenderingEngineLocked(a *pvf.Archive) {
 }
 
 func (c *core) closeArchive() {
+	defer requestCacheMaintenance()
 	waitFor := c.archiveTasks.beginClose()
 	c.mu.RLock()
 	fileIndexCancel := c.fileIndexCancel

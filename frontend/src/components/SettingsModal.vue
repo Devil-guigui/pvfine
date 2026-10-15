@@ -114,7 +114,11 @@ const cacheUsageSummary = computed(() => {
   if (cacheUsageLoading.value) return "正在统计缓存占用…";
   const usage = cacheUsage.value;
   if (!usage) return "尚未统计";
-  const parts = [`共 ${formatBytes(usage.totalBytes)}，${usage.files} 个文件`];
+  const limit = usage.limitBytes > 0 ? formatBytes(usage.limitBytes) : "不限制";
+  const parts = [`共 ${formatBytes(usage.totalBytes)} / ${limit}，${usage.files} 个文件`,
+    `索引及其他缓存 ${formatBytes(usage.indexBytes)}`, `恢复备份 ${formatBytes(usage.backupBytes)}`,
+    `可自动清理 ${formatBytes(usage.reclaimableBytes)}`];
+  if (usage.overBudget) parts.push("已超出软上限；受保护内容或临时文件可能使占用无法降至预算内");
   if (usage.inUseBytes > 0) {
     parts.push(`其中 ${formatBytes(usage.inUseBytes)} 正在被当前归档使用`);
   }
@@ -334,6 +338,17 @@ async function copyText(text: string, label: string): Promise<void> {
   }
 }
 
+async function onCacheLimitChange(value: number | null): Promise<void> {
+  if (value === null) return;
+  try {
+    await settings.saveCacheLimitGiB(value);
+    const result = await CacheService.EnforceBudget();
+    cacheUsage.value = result.usage;
+  } catch (error: any) {
+    message.error(`更新缓存预算失败：${error?.message ?? error}`);
+  }
+}
+
 /** 统计应用缓存占用(搜索索引、归档索引、高级搜索索引、图标索引与定时缓存)。 */
 async function refreshCacheUsage(): Promise<void> {
   if (cacheUsageLoading.value) return;
@@ -367,7 +382,7 @@ async function onClearCache(): Promise<void> {
         h(
           "div",
           { class: "recovery-prompt-line" },
-          "当前归档正在使用的索引无法立即删除，关闭归档或重启后会自动回收。"
+          "当前归档正在使用的索引无法立即删除，关闭归档后可再次清理；超出空间上限时会自动回收。"
         ),
         autosave.status?.exists
           ? h(
@@ -1228,6 +1243,30 @@ function formatBytes(bytes: number): string {
                   >
                     清理缓存
                   </NButton>
+                </div>
+              </div>
+              <div class="setting-item">
+                <div class="setting-item-icon"><NIcon :size="18"><FolderOpen24Regular /></NIcon></div>
+                <div class="setting-item-content">
+                  <div class="setting-item-label">缓存空间上限</div>
+                  <div class="setting-item-desc">默认 10 GiB，0 表示不限制。超限后按最近使用时间清理至上限的 80%。</div>
+                  <div class="setting-item-desc">自动清理保留正在使用的索引与恢复备份，因此实际占用可能暂时超过上限。</div>
+                </div>
+                <div class="setting-item-control">
+                  <NInputNumber
+                    :value="settings.cacheLimitGiB"
+                    :update-value-on-input="false"
+                    :min="0"
+                    :max="10240"
+                    :precision="0"
+                    :disabled="settings.saving"
+                    size="small"
+                    style="width: 150px"
+                    aria-label="缓存空间上限 GiB"
+                    @update:value="onCacheLimitChange"
+                  >
+                    <template #suffix>GiB</template>
+                  </NInputNumber>
                 </div>
               </div>
             </div>

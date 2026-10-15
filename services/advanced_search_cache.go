@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
 	"pvfine/internal/pvf"
@@ -24,6 +22,9 @@ func advancedIndexFiles(shards int) []string {
 // shards from concurrent builders or see a half-written index. Hard links avoid
 // copying gigabytes and let active sessions survive eviction of their cache.
 func (d *advancedSQLite) publishCache(root string) error {
+	finishIO := holdCachePaths(root)
+	defer finishIO()
+	d.cacheReleases = append(d.cacheReleases, holdCachePaths(d.cachePath))
 	staging, err := os.MkdirTemp(root, "publish-")
 	if err != nil {
 		return err
@@ -148,7 +149,7 @@ func (d *advancedSQLite) publishCurrentCache(c *core, a *pvf.Archive) {
 		d.cachePath = ""
 		return
 	}
-	pruneAdvancedCaches(root)
+	requestCacheMaintenance()
 }
 
 func advancedIndexDirectorySize(dir string) int64 {
@@ -162,48 +163,4 @@ func advancedIndexDirectorySize(dir string) int64 {
 		}
 	}
 	return size
-}
-
-func pruneAdvancedCaches(root string) {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return
-	}
-	type cached struct {
-		path string
-		size int64
-		used time.Time
-	}
-	var caches []cached
-	var total int64
-	for _, entry := range entries {
-		legacy := (!entry.IsDir() && strings.HasPrefix(entry.Name(), "refs-v1-") && strings.HasSuffix(entry.Name(), ".db")) ||
-			(entry.IsDir() && strings.HasPrefix(entry.Name(), "refs-v2-"))
-		current := entry.IsDir() && (strings.HasPrefix(entry.Name(), "refs-v3-") || strings.HasPrefix(entry.Name(), "refs-v4-"))
-		if !legacy && !current {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		path, size := filepath.Join(root, entry.Name()), info.Size()
-		if entry.IsDir() {
-			size = advancedIndexDirectorySize(path)
-		}
-		caches = append(caches, cached{path, size, info.ModTime()})
-		total += size
-	}
-	sort.Slice(caches, func(i, j int) bool { return caches[i].used.Before(caches[j].used) })
-	for i, cache := range caches {
-		// Keep the newest index even if it alone exceeds the soft 2 GiB budget.
-		// Evicting a just-built large index forces another multi-minute rebuild
-		// every time that archive is reopened.
-		if total <= 2<<30 || i == len(caches)-1 {
-			break
-		}
-		if os.RemoveAll(cache.path) == nil {
-			total -= cache.size
-		}
-	}
 }

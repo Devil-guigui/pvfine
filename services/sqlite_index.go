@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +27,7 @@ import (
 const largeArchiveIndexThreshold = 100000
 
 type sqliteArchiveIndex struct {
+	releaseCache              func()
 	dbMu                      sync.RWMutex
 	db                        *sql.DB
 	path                      string
@@ -90,6 +90,10 @@ func (i *sqliteArchiveIndex) close() {
 	}
 	i.dbMu.Lock()
 	defer i.dbMu.Unlock()
+	if i.releaseCache != nil {
+		i.releaseCache()
+		i.releaseCache = nil
+	}
 	if i.db == nil {
 		return
 	}
@@ -423,7 +427,7 @@ func openSQLiteArchiveIndex(a *pvf.Archive) (*sqliteArchiveIndex, bool, error) {
 	return openSQLiteArchiveIndexContext(context.Background(), a)
 }
 
-func openSQLiteArchiveIndexContext(ctx context.Context, a *pvf.Archive) (*sqliteArchiveIndex, bool, error) {
+func openSQLiteArchiveIndexContext(ctx context.Context, a *pvf.Archive) (result *sqliteArchiveIndex, hit bool, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
@@ -449,6 +453,17 @@ func openSQLiteArchiveIndexContext(ctx context.Context, a *pvf.Archive) (*sqlite
 		}
 		tempDir, path = dir, filepath.Join(dir, "index.db")
 	}
+
+	finishIO := holdCachePaths(filepath.Dir(path))
+	defer finishIO()
+	release := holdCachePaths(path)
+	defer func() {
+		if result != nil {
+			result.releaseCache = release
+		} else {
+			release()
+		}
+	}()
 
 	if !a.Modified() {
 		if db, openErr := openArchiveIndexDatabase(path, false); openErr == nil {
@@ -535,7 +550,6 @@ func openSQLiteArchiveIndexContext(ctx context.Context, a *pvf.Archive) (*sqlite
 	}
 	_ = enableArchiveIndexWAL(db)
 	idx.db = db
-	pruneArchiveIndexCache(filepath.Dir(path), path)
 	if err := idx.detachCacheLocked(); err != nil {
 		idx.close()
 		return nil, false, err
@@ -566,45 +580,6 @@ SELECT 1 FROM sqlite_master WHERE type='index' AND name='files_path')`).Scan(&ex
 	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS files_path ON files(path,file_index)`)
 	developmentOrErrorLog(err, "[pvfine:index] sqlite file path index upgrade finished: elapsed=%s error=%v", time.Since(started).Round(time.Millisecond), err)
 	return err
-}
-
-func pruneArchiveIndexCache(dir, current string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	type cacheFile struct {
-		path string
-		size int64
-		mod  int64
-	}
-	files := make([]cacheFile, 0, len(entries))
-	var total int64
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".db" {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		path := filepath.Join(dir, entry.Name())
-		files = append(files, cacheFile{path: path, size: info.Size(), mod: info.ModTime().UnixNano()})
-		total += info.Size()
-	}
-	const maxCacheBytes = int64(2 << 30)
-	if total <= maxCacheBytes {
-		return
-	}
-	sort.Slice(files, func(left, right int) bool { return files[left].mod < files[right].mod })
-	for _, file := range files {
-		if file.path == current || total <= maxCacheBytes {
-			break
-		}
-		if os.Remove(file.path) == nil {
-			total -= file.size
-		}
-	}
 }
 
 func sqliteIndexComplete(db *sql.DB, identity string) bool {

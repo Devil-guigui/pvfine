@@ -93,6 +93,10 @@ export interface AnnotationReloadResult {
 }
 
 export interface AppSettings {
+    /**
+     * CacheLimitGiB is the soft disk budget; zero disables automatic eviction.
+     */
+    "cacheLimitGiB": number;
     "annotationTagPlacement": string;
     "explorerOpenMode": string;
     "vimMode": boolean;
@@ -296,6 +300,11 @@ export interface CacheClearResult {
  * CacheUsage is the disk footprint reported to the settings page.
  */
 export interface CacheUsage {
+    "limitBytes": number;
+    "indexBytes": number;
+    "backupBytes": number;
+    "reclaimableBytes": number;
+    "overBudget": boolean;
     "path": string;
     "files": number;
     "totalBytes": number;
