@@ -105,6 +105,9 @@ func (s *EditorService) GetFileBasic(index int32) (*FileMeta, error) {
 		meta.Editable = a.WriteCapabilities().CanSave
 		meta.Text = text
 	default:
+		if strings.HasSuffix(strings.ToLower(meta.Path), ".ani") {
+			return s.readBinaryANI(a, index, meta)
+		}
 		meta.Text = fmt.Sprintf("; 不支持的类型 %d(v1 仅支持脚本/文本编辑)", file.DataType)
 	}
 	return meta, nil
@@ -167,6 +170,9 @@ func (s *EditorService) getFile(index int32) (*FileMeta, error) {
 			meta.Annotations = annotations
 		}
 	default:
+		if strings.HasSuffix(strings.ToLower(meta.Path), ".ani") {
+			return s.readBinaryANI(a, index, meta)
+		}
 		meta.Text = fmt.Sprintf("; 不支持的类型 %d(v1 仅支持脚本/文本编辑)", f.DataType)
 	}
 	meta.Modified = a.IsModified(index)
@@ -679,3 +685,21 @@ func (s *EditorService) CancelUnpack() {
 
 // IsUnpacking 报告解包是否进行中。
 func (s *EditorService) IsUnpacking() bool { return s.c.unpackRunning.Load() }
+
+// Binary ANI is a read-only decoded view; native payload/type remain intact for
+// extraction and byte-identical archive saves across all container families.
+func (s *EditorService) readBinaryANI(a *pvf.Archive, index int32, meta *FileMeta) (*FileMeta, error) {
+	meta.Editable = false
+	meta.Modified = a.IsModified(index)
+	if meta.Size > s.editableByteLimit() {
+		meta.Text = "; 二进制 ANI 过大，超过文本查看上限。可在编辑器设置中调整。"
+		return meta, nil
+	}
+	text, err := a.Text(index)
+	if err != nil {
+		meta.Text = "; 二进制 ANI 解码失败：" + err.Error()
+		return meta, nil
+	}
+	meta.Text = text
+	return meta, nil
+}

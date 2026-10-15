@@ -949,6 +949,7 @@ function onDrop(event: DragEvent): void {
             <div v-if="!tab.editable" class="readonly-hint">
               <template v-if="archive.info?.writeCapabilities && !archive.info.writeCapabilities.canSave">{{ archive.info.writeCapabilities.reason }}</template>
               <template v-else-if="tab.dataType === 1 || tab.dataType === 3">{{ tab.text }}</template>
+              <template v-else-if="tab.path.toLowerCase().endsWith('.ani') && tab.text.startsWith('#PVF_File')">二进制 ANI 解码视图（只读）</template>
               <template v-else>该文件类型(text {{ tab.dataType }},{{ sizeText(tab.size) }})暂不支持编辑</template>
             </div>
             <CodeEditor

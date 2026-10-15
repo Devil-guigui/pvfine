@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"pvfine/internal/ani"
 	"pvfine/internal/buildmode"
 	"pvfine/internal/rendering"
 )
@@ -123,6 +124,9 @@ func (a *Archive) Text(i int32) (string, error) {
 	case TypeScript:
 		return a.decodeScriptForPath(raw, a.Path(i)), nil
 	default:
+		if strings.HasSuffix(strings.ToLower(a.Path(i)), ".ani") {
+			return ani.DecodeBinary(raw)
+		}
 		return "", nil
 	}
 }

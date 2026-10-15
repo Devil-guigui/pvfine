@@ -16,6 +16,8 @@ const emit = defineEmits<{
 }>();
 
 const provider = computed(() => getPreviewProvider(props.file));
+const previewable = computed(() => props.file.editable ||
+  (provider.value?.id === "ani" && props.file.text.startsWith("#PVF_File")));
 const gameTooltip = computed(() => provider.value?.chrome === "game-tooltip");
 </script>
 
@@ -44,12 +46,12 @@ const gameTooltip = computed(() => provider.value?.chrome === "game-tooltip");
     <div class="preview-host-body" :class="{ 'preview-host-body--game-tooltip': gameTooltip }">
       <component
         :is="provider.component"
-        v-if="provider && file.editable"
+        v-if="provider && previewable"
         :file="file"
         :active="active"
       />
       <NEmpty
-        v-else-if="provider && !file.editable"
+        v-else-if="provider && !previewable"
         size="small"
         description="当前文件不是可解析的文本类型"
       />

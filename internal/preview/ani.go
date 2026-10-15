@@ -56,9 +56,10 @@ type token struct {
 }
 
 type section struct {
-	name   string
-	line   int
-	values []token
+	indented bool
+	name     string
+	line     int
+	values   []token
 }
 
 type frameBlock struct {
@@ -91,7 +92,7 @@ func ParseANI(text string) Document {
 			continue
 		}
 		if current != nil {
-			if isFramePart(item.name) {
+			if isFramePart(item.name) || (item.indented && (item.name == "loop" || item.name == "shadow")) {
 				current.parts = append(current.parts, item)
 				continue
 			}
@@ -243,7 +244,7 @@ func parseSections(text string) []section {
 					current = nil
 					continue
 				}
-				sections = append(sections, section{name: name, line: lineNumber + 1, values: make([]token, 0)})
+				sections = append(sections, section{indented: len(line) > 0 && (line[0] == ' ' || line[0] == '\t'), name: name, line: lineNumber + 1, values: make([]token, 0)})
 				current = &sections[len(sections)-1]
 				rest := strings.TrimSpace(trimmed[end+1:])
 				if rest != "" {

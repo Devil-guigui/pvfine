@@ -124,3 +124,16 @@ func assertIssue(t *testing.T, issues []Issue, severity IssueSeverity, message s
 	}
 	t.Fatalf("missing %s issue containing %q: %#v", severity, message, issues)
 }
+
+func TestParseANIFrameFlagsStayInFrame(t *testing.T) {
+	text := "[LOOP]\n1\n[SHADOW]\n1\n[FRAME MAX]\n1\n[FRAME000]\n\t[IMAGE]\n\t\t`test.img` 0\n\t[LOOP]\n\t\t0\n\t[SHADOW]\n\t\t0\n\t[DELAY]\n\t\t75\n"
+	doc := ParseANI(text)
+	if !doc.Valid || !doc.Loop || !doc.Shadow || len(doc.Frames) != 1 || doc.Frames[0].Delay != 75 {
+		t.Fatalf("frame flags escaped into global scope: %+v", doc)
+	}
+	// Unindented global sections after frames retain the existing behavior.
+	after := ParseANI("[FRAME MAX]\n1\n[FRAME000]\n[IMAGE]\n`test.img` 0\n[DELAY]\n75\n[LOOP]\n1\n")
+	if !after.Valid || !after.Loop {
+		t.Fatal("global section after frame stopped working")
+	}
+}
