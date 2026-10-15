@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math"
 	"sort"
 	"strconv"
@@ -727,6 +728,8 @@ func (a *Archive) cloneForBatch() *Archive {
 		data:                    a.data,
 		contentDigest:           a.contentDigest,
 		tw:                      a.tw,
+		act60:                   a.act60,
+		act60Sources:            maps.Clone(a.act60Sources),
 		hdr:                     a.hdr,
 		guard:                   a.guard,
 		keys:                    a.keys,
@@ -829,7 +832,22 @@ func (a *Archive) commitBatch(stage *Archive, selected map[int32]struct{}) error
 		if !bytes.Equal(previous, payload) {
 			changed = append(changed, index)
 		}
+
 		nextOverlay[index] = append([]byte(nil), payload...)
+	}
+
+	if a.act60 != nil {
+		for index := range selected {
+			identity := a.FileIdentity(index)
+			if text, ok := stage.act60Sources[identity]; ok {
+				if a.act60Sources == nil {
+					a.act60Sources = make(map[uint64]string)
+				}
+				a.act60Sources[identity] = text
+			} else {
+				delete(a.act60Sources, identity)
+			}
+		}
 	}
 
 	a.cacheMu.Lock()

@@ -123,9 +123,11 @@ func (a *Archive) ApplyScriptChanges(stage *Archive, changes []ScriptChange) err
 			if err := a.SetRawBytes(index, change.Raw); err != nil {
 				return err
 			}
+			a.copyACT60SourceFrom(stage, index, change.Path, change.Raw)
 			continue
 		}
-		a.AddFile(change.Path, change.Raw, change.DataType)
+		index := a.AddFile(change.Path, change.Raw, change.DataType)
+		a.copyACT60SourceFrom(stage, index, change.Path, change.Raw)
 	}
 	a.InvalidateStringTables()
 	return nil

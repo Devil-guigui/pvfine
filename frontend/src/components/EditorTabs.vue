@@ -55,6 +55,7 @@ const archiveFormatNames: Record<string, string> = {
   tw: "TW",
   paged115: "115US",
   paged100cn: "100CN",
+  act60: "60ACT",
 };
 const archiveFormatName = computed(
   () => archiveFormatNames[archive.info?.format ?? ""] ?? "UNKNOWN",

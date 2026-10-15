@@ -1,6 +1,7 @@
 package pvf
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -92,9 +93,11 @@ type Archive struct {
 
 	// format separates container transport from client content conventions.
 	// pageKeys retains the per-page state needed to write the container back.
-	format   formatProfile
-	pageKeys []byte
-	tw       *twArchive // immutable TW transport and index metadata
+	format       formatProfile
+	pageKeys     []byte
+	act60        *act60Archive     // immutable 60ACT transport metadata
+	act60Sources map[uint64]string // edited ACT60 sources, keyed by stable file identity
+	tw           *twArchive        // immutable TW transport and index metadata
 
 	sourcePath string // file the archive was opened from
 
@@ -266,6 +269,12 @@ func parse(data []byte, sidecarDir string) (*Archive, error) {
 }
 
 func parseOwned(data []byte, sidecarDir string, owned bool) (*Archive, error) {
+	if tree, body, count, legacy, ok := probeACT60(data); ok {
+		return parseACT60(data, tree, body, count, legacy)
+	}
+	if bytes.HasPrefix(data, []byte(act60Signature)) {
+		return nil, fmt.Errorf("%w: ACT60 directory header or checksum", ErrInvalidSection)
+	}
 	if isTW(data) {
 		return parseTW(data)
 	}

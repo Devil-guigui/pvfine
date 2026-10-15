@@ -102,7 +102,7 @@ func (s *EditorService) GetFileBasic(index int32) (*FileMeta, error) {
 				return nil, err
 			}
 		}
-		meta.Editable = true
+		meta.Editable = a.WriteCapabilities().CanSave
 		meta.Text = text
 	default:
 		meta.Text = fmt.Sprintf("; 不支持的类型 %d(v1 仅支持脚本/文本编辑)", file.DataType)
@@ -157,7 +157,7 @@ func (s *EditorService) getFile(index int32) (*FileMeta, error) {
 				return nil, err
 			}
 		}
-		meta.Editable = true
+		meta.Editable = a.WriteCapabilities().CanSave
 		meta.Text = text
 		if f.DataType == pvf.TypeScript {
 			annotations, err := s.c.editorAnnotationsLocked(index, text)

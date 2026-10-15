@@ -155,6 +155,22 @@ func lexScriptText(text string) []scriptLexeme {
 			i++
 			continue
 		}
+		if rs[i] == '/' && i+1 < len(rs) {
+			if rs[i+1] == '/' {
+				for i < len(rs) && rs[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if rs[i+1] == '*' {
+				i += 2
+				for i+1 < len(rs) && !(rs[i] == '*' && rs[i+1] == '/') {
+					i++
+				}
+				i = min(i+2, len(rs))
+				continue
+			}
+		}
 		if rs[i] == '#' {
 			for i < len(rs) && rs[i] != '\n' {
 				i++
@@ -272,6 +288,9 @@ func parseTextMarker(marker string) (int32, string, bool) {
 }
 
 func normalizeTextToken(raw string) (int32, string) {
+	if _, _, ok := ParsePlaceholder(raw); ok {
+		return 8, raw
+	}
 	if value, err := strconv.ParseInt(raw, 10, 32); err == nil {
 		return 0, strconv.FormatInt(value, 10)
 	}

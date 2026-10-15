@@ -32,6 +32,7 @@ const (
 	FormatRecovered  = "recovered"
 	FormatPaged100CN = "paged100cn"
 	FormatTW         = "tw"
+	FormatACT60      = "act60"
 )
 
 var standardProfile = formatProfile{id: FormatStandard}
@@ -61,6 +62,8 @@ var paged100CNProfile = formatProfile{
 	container: pagedContainer,
 	rules:     ContentRules{RequiresIndexHash: true, SupportsStringReferences: true},
 }
+
+var act60Profile = formatProfile{id: FormatACT60, rules: ContentRules{SupportsStringReferences: true}}
 
 var twProfile = formatProfile{id: FormatTW, rules: ContentRules{SupportsStringReferences: true}}
 
@@ -130,6 +133,8 @@ func (a *Archive) ClientVersion() string {
 		return "100CN"
 	case FormatTW:
 		return "TW"
+	case FormatACT60:
+		return "60ACT"
 	default:
 		return ""
 	}

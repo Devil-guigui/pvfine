@@ -103,7 +103,7 @@ func (a *Archive) ModifiedCount() int {
 	if len(a.overlay) > 0 {
 		return len(a.overlay)
 	}
-	if a.structuralDirty || a.poolsDirty {
+	if a.structuralDirty || (a.act60 == nil && a.poolsDirty) {
 		return 1
 	}
 	return 0
@@ -194,6 +194,9 @@ func (a *Archive) SaveTo(w io.Writer) error {
 // is reported separately by SaveAsWithProgress after this method returns.
 func (a *Archive) SaveToWithProgress(w io.Writer, progress SaveProgressFunc) error {
 	reportSaveProgress(progress, "preparing", 0, 0, "")
+	if a.act60 != nil {
+		return a.saveACT60(w, progress)
+	}
 	if a.tw != nil {
 		return a.saveTWWithProgress(w, progress)
 	}
@@ -627,4 +630,4 @@ func encodeHeader(h Header) []byte {
 }
 
 // Revert drops the pending edit for entry i.
-func (a *Archive) Revert(i int32) { delete(a.overlay, i) }
+func (a *Archive) Revert(i int32) { delete(a.overlay, i); delete(a.act60Sources, a.FileIdentity(i)) }

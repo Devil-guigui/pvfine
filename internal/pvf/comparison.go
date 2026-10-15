@@ -45,7 +45,7 @@ func (a *Archive) ForEachComparisonChunk(ctx context.Context, indexes []int32, f
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if a.tw != nil {
+	if a.tw != nil || a.act60 != nil {
 		for _, index := range indexes {
 			if index < 0 || index >= a.FileCount() {
 				return ErrBadIndex

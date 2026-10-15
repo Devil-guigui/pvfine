@@ -947,7 +947,8 @@ function onDrop(event: DragEvent): void {
                Keep the text subtree mounted to preserve selection and undo. -->
           <div v-else v-show="!isGUI(tab.index)" class="text-mode-content">
             <div v-if="!tab.editable" class="readonly-hint">
-              <template v-if="tab.dataType === 1 || tab.dataType === 3">{{ tab.text }}</template>
+              <template v-if="archive.info?.writeCapabilities && !archive.info.writeCapabilities.canSave">{{ archive.info.writeCapabilities.reason }}</template>
+              <template v-else-if="tab.dataType === 1 || tab.dataType === 3">{{ tab.text }}</template>
               <template v-else>该文件类型(text {{ tab.dataType }},{{ sizeText(tab.size) }})暂不支持编辑</template>
             </div>
             <CodeEditor

@@ -253,6 +253,9 @@ func (a *Archive) ForEachRawFile(ctx context.Context, fn func(index int32, path 
 }
 
 func (a *Archive) decompressChunk(ci int32) ([]byte, error) {
+	if a.act60 != nil {
+		return a.act60Chunk(ci)
+	}
 	if a.tw != nil {
 		return a.twChunk(ci)
 	}

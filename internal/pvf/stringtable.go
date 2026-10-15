@@ -43,6 +43,7 @@ var stringTableFiles = []string{
 	"n_string_translate.lst",
 	"list/n_string_kor.lst",
 	"n_string_kor.lst",
+	"string.lst", // ACT60 clients use this root mapping for <table::key> sources.
 }
 
 func IsStringTableMappingPath(path string) bool {

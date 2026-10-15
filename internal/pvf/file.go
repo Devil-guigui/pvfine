@@ -17,7 +17,7 @@ import (
 
 // Modified reports whether any pending edits exist.
 func (a *Archive) Modified() bool {
-	return len(a.overlay) > 0 || a.structuralDirty || a.poolsDirty
+	return len(a.overlay) > 0 || a.structuralDirty || (a.act60 == nil && a.poolsDirty)
 }
 
 // RawBytes returns the file payload. The slice aliases a cached chunk;
@@ -30,6 +30,12 @@ func (a *Archive) RawBytes(i int32) ([]byte, error) {
 		return b, nil
 	}
 	it := &a.items[i]
+	if a.act60 != nil {
+		if it.chunk < 0 {
+			return nil, nil
+		}
+		return a.act60Chunk(it.chunk)
+	}
 	if a.tw != nil {
 		if it.chunk < 0 {
 			return nil, nil
@@ -60,6 +66,7 @@ func (a *Archive) SetRawBytes(i int32, b []byte) error {
 	}
 	cp := make([]byte, len(b))
 	copy(cp, b)
+	delete(a.act60Sources, a.FileIdentity(i))
 	a.overlay[i] = cp
 	a.recordMutation(i, a.Path(i), MutationModified)
 	return nil
@@ -78,6 +85,7 @@ func (a *Archive) SetDataType(i int32, dataType int32) error {
 	if a.items[i].typ == dataType {
 		return nil
 	}
+	delete(a.act60Sources, a.FileIdentity(i))
 	a.items[i].typ = dataType
 	a.recordMutation(i, a.Path(i), MutationModified)
 	return nil
@@ -86,6 +94,9 @@ func (a *Archive) SetDataType(i int32, dataType int32) error {
 // Text decodes entry i: token scripts are decompiled, UTF-16 sections are
 // returned as text (with Korean-server mojibake repaired when detected).
 func (a *Archive) Text(i int32) (string, error) {
+	if a.act60 != nil && i >= 0 && i < int32(len(a.items)) && a.items[i].typ == TypeScript {
+		return a.act60ScriptText(i)
+	}
 	var started time.Time
 	if buildmode.Development {
 		started = time.Now()
@@ -145,6 +156,9 @@ func (a *Archive) SetScriptRenderer(engine *rendering.Engine) {
 func (a *Archive) SetText(i int32, text string) error {
 	if i < 0 || i >= int32(len(a.items)) {
 		return ErrBadIndex
+	}
+	if a.act60 != nil && a.items[i].typ == TypeScript {
+		return a.setACT60ScriptText(i, text)
 	}
 	switch a.items[i].typ {
 	case TypeUnicode:
@@ -224,6 +238,7 @@ func (a *Archive) RemoveFiles(indexes []int32) ([]string, error) {
 		index := int32(oldIndex)
 		if _, ok := removed[index]; ok {
 			path := a.Path(index)
+			delete(a.act60Sources, item.identity)
 			paths = append(paths, path)
 			a.recordMutation(index, path, MutationRemoved)
 			if item.chunk >= 0 && item.chunk < int32(len(a.groups)) && item.size > 0 {
@@ -264,6 +279,9 @@ func cloneRemovedSpans(values map[int32][]removedFileSpan) map[int32][]removedFi
 // AddFileText appends a new entry from decompiled text, encoding it according
 // to dataType (TypeScript or TypeUnicode).
 func (a *Archive) AddFileText(relPath, text string, dataType int32) (int32, error) {
+	if a.act60 != nil && dataType == TypeUnicode && isACT60Script(relPath, text) {
+		dataType = TypeScript
+	}
 	i := a.AddFile(relPath, nil, dataType)
 	if err := a.SetText(i, text); err != nil {
 		return i, err

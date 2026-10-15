@@ -13,6 +13,17 @@ func (a *Archive) Release() int64 {
 	released := int64(len(a.data) + len(a.pageKeys) + len(a.items)*24 + len(a.groups)*8)
 	released += int64(len(a.strA) + len(a.strW))
 	released += int64(len(a.compactPaths) * 8)
+	if a.act60 != nil {
+		released += int64(len(a.act60.entries)*80 + len(a.act60.directory))
+	}
+	if a.act60 != nil {
+		for _, e := range a.act60.entries {
+			released += int64(len(e.tokens))
+		}
+	}
+	for _, source := range a.act60Sources {
+		released += int64(len(source))
+	}
 	if a.tw != nil {
 		released += int64(len(a.tw.entries)*48 + len(a.tw.strings)*4 + len(a.tw.stringTable) + len(a.tw.directory))
 	}
@@ -22,6 +33,8 @@ func (a *Archive) Release() int64 {
 	for _, value := range a.overlay {
 		released += int64(len(value))
 	}
+	a.act60Sources = nil
+	a.act60 = nil
 	a.tw = nil
 	a.data = nil
 	a.contentDigest = ""

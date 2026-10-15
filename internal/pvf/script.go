@@ -26,6 +26,9 @@ func (a *Archive) encodeScript(text string) ([]byte, error) {
 }
 
 func (a *Archive) encodeScriptWithResolver(text string, resolve func(string) (int32, error)) ([]byte, error) {
+	if a.act60 != nil {
+		text = act60ScriptSource(text)
+	}
 	var tokens []type1Token
 	rs := []rune(text)
 	n := len(rs)
