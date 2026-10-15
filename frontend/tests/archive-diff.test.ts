@@ -3,7 +3,7 @@ import { createPinia, disposePinia, setActivePinia, type Pinia } from "pinia";
 import type { ArchiveDiffFile } from "../bindings/pvfine/services/models";
 import { diffOperation, orientArchiveDiff } from "../src/archiveDiff";
 const mocks = vi.hoisted(() => ({
-  Start: vi.fn(), Release: vi.fn(), Status: vi.fn(), Children: vi.fn(), FileDiff: vi.fn(), Cancel: vi.fn(), SelectArchive: vi.fn(),
+  Start: vi.fn(), Release: vi.fn(), Status: vi.fn(), Children: vi.fn(), FilteredChildren: vi.fn(), FileDiff: vi.fn(), Cancel: vi.fn(), SelectArchive: vi.fn(),
   archiveDiffDrafts: vi.fn(), events: new Map<string, () => void>(),
 }));
 vi.mock("../bindings/pvfine/services", () => ({ ArchiveDiffService: mocks }));
@@ -16,7 +16,9 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 let pinia: Pinia;
 beforeEach(() => {
   pinia = createPinia(); setActivePinia(pinia); vi.resetAllMocks(); mocks.events.clear();
-  mocks.Start.mockResolvedValue(ready); mocks.Status.mockResolvedValue(ready); mocks.Children.mockResolvedValue([{ path: "equipment", name: "equipment", isDir: true, count: 6, operation: "" }]);
+  mocks.Start.mockResolvedValue(ready); mocks.Status.mockResolvedValue(ready);
+  mocks.Children.mockResolvedValue([{ path: "equipment", name: "equipment", isDir: true, count: 6, operation: "" }]);
+  mocks.FilteredChildren.mockImplementation((id: string, parent: string) => mocks.Children(id, parent));
   mocks.Release.mockResolvedValue(undefined); mocks.Cancel.mockResolvedValue(undefined);
   mocks.FileDiff.mockResolvedValue(file); mocks.archiveDiffDrafts.mockReturnValue([{ fileIndex: 0, path: "a.equ", text: "draft" }]);
 });

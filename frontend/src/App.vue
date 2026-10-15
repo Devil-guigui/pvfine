@@ -18,7 +18,6 @@ import AdvancedSearchModal from "./components/AdvancedSearchModal.vue";
 import BatchProcessModal from "./components/BatchProcessModal.vue";
 import ImportModal from "./components/ImportModal.vue";
 import ExportModal from "./components/ExportModal.vue";
-import ArchiveDiffModal from "./components/ArchiveDiffModal.vue";
 import VersionPanel from "./components/VersionPanel.vue";
 import DropRateEditorModal from "./components/DropRateEditorModal.vue";
 import RuleEditorModal from "./components/RuleEditorModal.vue";
@@ -240,7 +239,6 @@ function executeShortcut(command: ShortcutCommandId): void {
           <ImportModal />
           <ExportModal />
           <VersionPanel />
-          <ArchiveDiffModal />
           <DropRateEditorModal />
           <SettingsModal />
           <RuleEditorModal />
