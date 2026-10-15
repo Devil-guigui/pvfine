@@ -42,6 +42,7 @@ type sqliteArchiveIndex struct {
 	semanticPublishedRevision uint64
 	pendingPaths              map[string]struct{}
 	pendingIDs                map[uint64]struct{}
+	pendingStructural         bool
 }
 
 func (i *sqliteArchiveIndex) refreshFileMetadata(a *pvf.Archive, indexes map[int32]struct{}) error {
@@ -462,7 +463,20 @@ func openSQLiteArchiveIndexContext(ctx context.Context, a *pvf.Archive) (*sqlite
 					return nil, false, fmt.Errorf("upgrade SQLite file path index: %w", err)
 				}
 				developmentLog("[pvfine:index] sqlite file index cache hit: files=%d", a.FileCount())
-				return &sqliteArchiveIndex{db: db, path: path, identity: identity, ready: sqliteSemanticIndexReady(db), entries: archiveEntryIndexes(a)}, true, nil
+				index := &sqliteArchiveIndex{db: db, path: path, identity: identity, ready: sqliteSemanticIndexReady(db), entries: archiveEntryIndexes(a)}
+				// Prepare private storage before installing the archive, so a
+				// filesystem without reflinks never copies gigabytes on editing.
+				if err := index.detachCacheLocked(); err != nil {
+					index.close()
+					return nil, false, err
+				}
+				if index.ready {
+					if err := ensureSQLiteSemanticCount(ctx, index.db); err != nil {
+						index.close()
+						return nil, false, err
+					}
+				}
+				return index, true, nil
 			}
 			_ = db.Close()
 		}
@@ -522,6 +536,10 @@ func openSQLiteArchiveIndexContext(ctx context.Context, a *pvf.Archive) (*sqlite
 	_ = enableArchiveIndexWAL(db)
 	idx.db = db
 	pruneArchiveIndexCache(filepath.Dir(path), path)
+	if err := idx.detachCacheLocked(); err != nil {
+		idx.close()
+		return nil, false, err
+	}
 	return idx, false, nil
 }
 
@@ -809,6 +827,9 @@ func (i *sqliteArchiveIndex) buildSemantic(ctx context.Context, c *core, a *pvf.
 	// them maintained for every semantic row makes a forced rebuild several
 	// times slower on million-file archives.
 	resetStartedAt := time.Now()
+	if _, err := tx.Exec(dropSemanticCountTriggers); err != nil {
+		return rollback(err)
+	}
 	if _, err := tx.Exec(`DROP INDEX IF EXISTS records_lower_path; DROP INDEX IF EXISTS records_lower_name; DROP INDEX IF EXISTS records_lower_id; DROP INDEX IF EXISTS records_file; DROP INDEX IF EXISTS tags_file; DROP INDEX IF EXISTS semantic_dependencies_path`); err != nil {
 		return rollback(err)
 	}
@@ -1002,6 +1023,9 @@ func (i *sqliteArchiveIndex) buildSemantic(ctx context.Context, c *core, a *pvf.
 		return rollback(err)
 	}
 	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta VALUES('specs',?)`, searchIndexSpecFingerprint(specs)); err != nil {
+		return rollback(err)
+	}
+	if err := installSQLiteSemanticCount(ctx, tx, count); err != nil {
 		return rollback(err)
 	}
 	indexStartedAt := time.Now()

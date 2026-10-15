@@ -17,7 +17,11 @@ func (i *sqliteArchiveIndex) queueSemanticMutations(summary pvf.MutationSummary)
 		i.pendingPaths = make(map[string]struct{})
 		i.pendingIDs = make(map[uint64]struct{})
 	}
+	i.pendingStructural = i.pendingStructural || summary.Structural
 	for _, mutation := range summary.Files {
+		if mutation.Kind != pvf.MutationModified {
+			i.pendingStructural = true
+		}
 		i.pendingPaths[normalizeSearchPath(mutation.Path)] = struct{}{}
 		if mutation.Identity != 0 {
 			i.pendingIDs[mutation.Identity] = struct{}{}
@@ -51,6 +55,83 @@ func (i *sqliteArchiveIndex) buildSemanticDelta(ctx context.Context, c *core, a 
 	}
 	for id := range i.pendingIDs {
 		ids[id] = struct{}{}
+	}
+	// Ordinary payload edits preserve registrations. Query only their existing
+	// rows and read metadata under the archive lock; no mutable batch clone is
+	// needed. Structural/list/dependency edits retain the general resolver.
+	fast := !i.pendingStructural
+	for path := range paths {
+		if strings.HasSuffix(path, ".lst") || strings.HasSuffix(path, ".str") || isNPCEntryPath(path) {
+			fast = false
+		}
+	}
+	matchedIDs := make(map[uint64]struct{})
+	for path := range paths {
+		if index, found := a.Find(path); found {
+			matchedIDs[a.FileIdentity(index)] = struct{}{}
+		}
+	}
+	for id := range ids {
+		if _, found := matchedIDs[id]; !found {
+			fast = false // duplicate paths require the identity-aware resolver
+		}
+	}
+	i.dbMu.RLock()
+	var fingerprint string
+	if err := i.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='specs'`).Scan(&fingerprint); err != nil || fingerprint != searchIndexSpecFingerprint(specs) {
+		fast = false
+	}
+	i.dbMu.RUnlock()
+	if fast {
+		affected := make(map[int32]struct{})
+		var replacements []semanticDeltaRecord
+		for path := range paths {
+			if index, found := a.Find(path); found {
+				affected[index] = struct{}{}
+			}
+		}
+		i.dbMu.RLock()
+		var err error
+		for index := range affected {
+			rows, queryErr := i.db.QueryContext(ctx, `SELECT path,record_id,list_path,category FROM records WHERE file_index=? AND category<>?`, index, SearchCategoryFile)
+			if queryErr != nil {
+				err = queryErr
+				break
+			}
+			for rows.Next() {
+				record := semanticDeltaRecord{index: index}
+				if err = rows.Scan(&record.path, &record.id, &record.listPath, &record.category); err != nil {
+					break
+				}
+				replacements = append(replacements, record)
+			}
+			if err == nil {
+				err = rows.Err()
+			}
+			_ = rows.Close()
+			if err != nil {
+				break
+			}
+		}
+		i.dbMu.RUnlock()
+		if err == nil {
+			npcNames := make(map[string]string)
+			for _, record := range replacements {
+				if isItemShopEntry(record.listPath, record.path) {
+					npcNames = buildNPCNameIndexFromArchive(a)
+					break
+				}
+			}
+			for n := range replacements {
+				record := &replacements[n]
+				record.metadata, _ = readIndexedMetadataFromArchive(a, record.index, record.listPath, npcNames)
+			}
+		}
+		c.mu.RUnlock()
+		if err != nil {
+			return 0, 0, err
+		}
+		return i.publishSemanticDelta(ctx, c, a, a, specs, gen, epoch, revision, affected, replacements, 0)
 	}
 	snapshot := a.CloneForBatch()
 	knownLists := make(map[string]struct{})
@@ -234,6 +315,13 @@ func (i *sqliteArchiveIndex) buildSemanticDelta(ctx context.Context, c *core, a 
 		record.metadata = metadata
 		replacements = append(replacements, record)
 	}
+	return i.publishSemanticDelta(ctx, c, a, snapshot, specs, gen, epoch, revision, affected, replacements, skipped)
+}
+
+// The revision guard allows the fast path to reuse the live archive safely.
+// A concurrent mutation is retried before reading any file or dependencies.
+func (i *sqliteArchiveIndex) publishSemanticDelta(ctx context.Context, c *core, a, snapshot *pvf.Archive, specs []searchableListSpec, gen, epoch, revision uint64, affected map[int32]struct{}, replacements []semanticDeltaRecord, skipped int) (int, int, error) {
+	var err error
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.indexIsCurrentLocked(a, gen) || ctx.Err() != nil {
@@ -320,16 +408,17 @@ func (i *sqliteArchiveIndex) buildSemanticDelta(ctx context.Context, c *core, a 
 		return 0, 0, err
 	}
 	var total int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM records WHERE category<>?`, SearchCategoryFile).Scan(&total); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='semantic_count'`).Scan(&total); err != nil {
 		return 0, 0, err
 	}
 	if err = tx.Commit(); err != nil {
 		return 0, 0, err
 	}
 	i.pendingPaths, i.pendingIDs = nil, nil
+	i.pendingStructural = false
 	i.ready, i.dirty = true, false
 	i.semanticPublishedEpoch, i.semanticPublishedRevision = epoch, revision
-	developmentLog("[pvfine:index] sqlite delta files=%d metadata=%d relations=%d", len(affected), len(replacements), len(currentRelations))
+	developmentLog("[pvfine:index] sqlite delta files=%d metadata=%d specs=%d", len(affected), len(replacements), len(specs))
 	return total, skipped, nil
 }
 

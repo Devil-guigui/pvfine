@@ -1,7 +1,6 @@
 package services
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"os"
@@ -59,15 +58,17 @@ func (c *core) syncSQLiteMutationMetadataLocked(a *pvf.Archive, summary pvf.Muta
 		if mutation.Kind == pvf.MutationRemoved {
 			continue
 		}
-		if mutation.Identity != 0 {
-			ids[mutation.Identity] = struct{}{}
-		} else if fileIndex, exists := a.Find(mutation.Path); exists {
+		if fileIndex, exists := a.Find(mutation.Path); exists && (mutation.Identity == 0 || a.FileIdentity(fileIndex) == mutation.Identity) {
 			changed[fileIndex] = struct{}{}
+		} else if mutation.Identity != 0 {
+			ids[mutation.Identity] = struct{}{}
 		}
 	}
-	for fileIndex, id := range index.entries {
-		if _, exists := ids[id]; exists {
-			changed[int32(fileIndex)] = struct{}{}
+	if len(ids) > 0 {
+		for fileIndex, id := range index.entries {
+			if _, exists := ids[id]; exists {
+				changed[int32(fileIndex)] = struct{}{}
+			}
 		}
 	}
 	if err := index.refreshFileMetadata(a, changed); err != nil {
@@ -89,7 +90,7 @@ func (i *sqliteArchiveIndex) detachCacheLocked() error {
 		return err
 	}
 	path := filepath.Join(dir, "index.db")
-	if err = backupSQLiteDatabase(context.Background(), i.db, path); err != nil {
+	if err = copyPrivateSQLiteIndex(i.db, i.path, path); err != nil {
 		_ = os.RemoveAll(dir)
 		return err
 	}

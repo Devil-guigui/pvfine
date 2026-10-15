@@ -398,6 +398,7 @@ func (c *core) buildSearchIndexSQLite(ctx context.Context, gen uint64, a *pvf.Ar
 	index.semanticInitialized = true
 	if !delta && index.semanticEpoch == epoch && c.batchRevision == revision {
 		index.pendingPaths, index.pendingIDs = nil, nil
+		index.pendingStructural = false
 	}
 	index.ready = true
 	if !pendingRefresh {
@@ -422,6 +423,10 @@ func (c *core) buildSearchIndexSQLite(ctx context.Context, gen uint64, a *pvf.Ar
 	emitEvent("archive:index-ready", status)
 	if pendingRefresh {
 		c.startSearchIndexWithOptions(pendingForce)
+	} else if !delta {
+		// Full builds now publish into private session storage. Preserve the
+		// completed clean cache for the next open as well.
+		c.persistCurrentSQLiteIndexAsync()
 	}
 }
 

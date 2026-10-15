@@ -2,7 +2,6 @@ package services
 
 import (
 	"compress/gzip"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -379,7 +378,8 @@ func (c *core) persistCurrentSQLiteIndexAsync() {
 	if err == nil {
 		tmpPath := tmp.Name()
 		_ = tmp.Close()
-		if err = backupSQLiteDatabase(context.Background(), index.db, tmpPath); err == nil {
+		_ = os.Remove(tmpPath)
+		if err = copyPrivateSQLiteIndex(index.db, index.path, tmpPath); err == nil {
 			_ = os.Remove(target)
 			err = os.Rename(tmpPath, target)
 		}

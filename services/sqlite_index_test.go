@@ -351,15 +351,28 @@ func TestSQLiteFilePathIndexUpgradesCachedArchive(t *testing.T) {
 		index.close()
 		t.Fatal("fresh archive unexpectedly hit the cache")
 	}
+	index.close()
+	// Working indexes are private. Simulate the old format in the persisted
+	// cache itself, rather than modifying a session snapshot.
+	cachePath, _, err := archiveIndexCachePath(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := openArchiveIndexDatabase(cachePath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Simulate a complete cache written before the path index was introduced.
-	if _, err := index.db.Exec(`DROP INDEX files_path;
+	if _, err := cache.Exec(`DROP INDEX files_path;
 INSERT INTO records(file_index,name,lower_name,record_id,lower_id,path,lower_path,category,list_path,size,data_type)
 VALUES(0,'preserved','preserved','42','42','equip/a.equ','equip/a.equ','equipment','equip/equipment.lst',0,1);
 UPDATE meta SET value='1' WHERE key='complete';`); err != nil {
-		index.close()
+		cache.Close()
 		t.Fatal(err)
 	}
-	index.close()
+	if err := cache.Close(); err != nil {
+		t.Fatal(err)
+	}
 	for pass := 0; pass < 2; pass++ {
 		index, hit, err = openSQLiteArchiveIndex(a)
 		if err != nil {
@@ -369,6 +382,9 @@ UPDATE meta SET value='1' WHERE key='complete';`); err != nil {
 			defer index.close()
 			if !hit || !index.ready {
 				t.Fatal("upgrade must preserve the complete semantic cache")
+			}
+			if index.path == cachePath || index.tempDir == "" {
+				t.Fatal("cache must be private before the first edit")
 			}
 			assertSQLiteFilePathQueryUsesIndex(t, index.db)
 			var name string

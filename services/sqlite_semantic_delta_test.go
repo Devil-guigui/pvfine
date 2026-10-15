@@ -55,6 +55,7 @@ func assertSemanticDeltaMatchesFull(t *testing.T, c *core, index *sqliteArchiveI
 		`SELECT file_index,tag_id,name,category FROM tags ORDER BY file_index,category,tag_id`,
 		`SELECT * FROM visuals ORDER BY file_index`,
 		`SELECT * FROM semantic_dependencies ORDER BY file_index,dependency_path`,
+		`SELECT value FROM meta WHERE key='semantic_count'`,
 	} {
 		c.mu.RLock()
 		actual := deltaQuery(t, index.db, query)
