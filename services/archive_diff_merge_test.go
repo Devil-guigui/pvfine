@@ -140,17 +140,92 @@ func TestArchiveDiffStringPoolDifferenceAndMerge(t *testing.T) {
 		t.Fatalf("merged text = %q, want hello_from_B", mergedText)
 	}
 
-	// 测试 MergeText：修改单文件文本
+	// 测试 MergeText：修改单文件文本（仍与 B 有差异）
 	newContent := "[name]\n\t`manually_edited`\n"
 	if err := diffService.MergeText(status.ID, "etc/test.etc", newContent); err != nil {
 		t.Fatalf("MergeText failed: %v", err)
 	}
-	// 测试通过目录路径合并整个目录下的所有差异文件
+	// 测试通过目录路径合并整个目录下的所有差异文件（包含仍有剩余差异的 test.etc 与未合并的 added.etc）
 	dirMergeRes, err := diffService.MergeFiles(status.ID, []string{"etc"})
 	if err != nil {
 		t.Fatalf("MergeFiles by directory failed: %v", err)
 	}
 	if dirMergeRes.SuccessCount != 1 {
 		t.Fatalf("Directory merge expected 1 remaining file merged, got: %+v", dirMergeRes)
+	}
+}
+
+func TestArchiveDiffPartialSavePreservesRemainingDiff(t *testing.T) {
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "base.pvf")
+	pathB := filepath.Join(dir, "other.pvf")
+
+	a := pvf.New()
+	if _, err := a.AddFileText("etc/test.etc", "[name]\n`val_A`\n[price]\n`100`\n", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SaveAs(pathA); err != nil {
+		t.Fatal(err)
+	}
+
+	b := pvf.New()
+	if _, err := b.AddFileText("etc/test.etc", "[name]\n`val_B`\n[price]\n`200`\n", pvf.TypeScript); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SaveAs(pathB); err != nil {
+		t.Fatal(err)
+	}
+
+	core := NewCore()
+	openA, err := pvf.Open(pathA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := core.setArchive(openA); err != nil {
+		t.Fatal(err)
+	}
+	defer core.closeArchive()
+
+	diffService := NewArchiveDiffService(core)
+	status, err := diffService.Start(ArchiveDiffRequest{Path: pathB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50; i++ {
+		s, _ := diffService.Status(status.ID)
+		if s.State == "ready" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// 局部保存：只合入 [name]，但 [price] 仍然不同
+	partialContent := "[name]\n`val_B`\n[price]\n`100`\n"
+	if err := diffService.MergeText(status.ID, "etc/test.etc", partialContent); err != nil {
+		t.Fatal(err)
+	}
+
+	// 验证局部保存后，etc/test.etc 仍然保留在差异列表中（因为 price 依然有差异）
+	flat, err := diffService.FlatFiles(status.ID, "", "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flat) != 1 || flat[0].Path != "etc/test.etc" {
+		t.Fatalf("expected etc/test.etc to remain in diff list, got %+v", flat)
+	}
+
+	// 完全保存：内容完全与 B 一致
+	fullContent := "[name]\n`val_B`\n[price]\n`200`\n"
+	if err := diffService.MergeText(status.ID, "etc/test.etc", fullContent); err != nil {
+		t.Fatal(err)
+	}
+
+	// 验证完全一致后，etc/test.etc 从差异列表中移除
+	flatAfter, err := diffService.FlatFiles(status.ID, "", "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flatAfter) != 0 {
+		t.Fatalf("expected etc/test.etc to be removed from diff list, got %+v", flatAfter)
 	}
 }

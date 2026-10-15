@@ -3,6 +3,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -270,7 +271,8 @@ func (s *ArchiveDiffService) FlatFiles(id, query, operation string) ([]ArchiveDi
 	return result, nil
 }
 
-// updateSessionAfterMerge 在合并写入后更新对比会话的 internal changes 缓存与统计
+// updateSessionAfterMerge 在合并写入后更新对比会话的 internal changes 缓存与统计。
+// 对于局部修改的文件，精确复核其与对比归档之间是否仍然存在差异，保留剩余差异条目。
 // @author flobit
 func (s *ArchiveDiffService) updateSessionAfterMerge(id string, mergedPaths []string, stage *pvf.Archive) {
 	s.mu.Lock()
@@ -285,8 +287,8 @@ func (s *ArchiveDiffService) updateSessionAfterMerge(id string, mergedPaths []st
 	}
 
 	mergedSet := make(map[string]bool, len(mergedPaths))
-	for _, p := range mergedPaths {
-		mergedSet[pvfversion.CanonicalPath(p)] = true
+	for _, mp := range mergedPaths {
+		mergedSet[pvfversion.CanonicalPath(mp)] = true
 	}
 
 	remainingChanges := make([]pvfversion.FileChange, 0, len(p.changes))
@@ -294,6 +296,18 @@ func (s *ArchiveDiffService) updateSessionAfterMerge(id string, mergedPaths []st
 
 	for key, change := range p.changes {
 		if mergedSet[key] {
+			// 精确复核该文件在当前归档与对比归档间是否仍有未合入的剩余差异
+			if newChange, hasDiff := archiveDiffCheckSingleFileChange(p.other, p.current, key, change.DisplayPath); hasDiff {
+				remainingChanges = append(remainingChanges, newChange)
+				switch newChange.Operation {
+				case pvfversion.OperationAdd:
+					added++
+				case pvfversion.OperationDelete:
+					deleted++
+				default:
+					modified++
+				}
+			}
 			continue
 		}
 		remainingChanges = append(remainingChanges, change)
@@ -320,6 +334,123 @@ func (s *ArchiveDiffService) updateSessionAfterMerge(id string, mergedPaths []st
 		p.children = children
 		p.filteredChildren = filteredChildren
 	}
+}
+
+// archiveDiffCheckSingleFileChange 检查单个文件在合并或修改后，与对比归档之间是否仍然存在差异。
+// 若无差异则返回 false，通知会话从差异树中移除该文件；若仍有差异则返回更新后的变更信息。
+func archiveDiffCheckSingleFileChange(before, after *pvf.Archive, canonicalKey, displayFallback string) (pvfversion.FileChange, bool) {
+	if before == nil || after == nil {
+		return pvfversion.FileChange{}, false
+	}
+	bi, bok := before.Find(canonicalKey)
+	ai, aok := after.Find(canonicalKey)
+	if !bok && !aok {
+		return pvfversion.FileChange{}, false
+	}
+	if !bok && aok {
+		aType, _, err := after.FileContentInfo(ai)
+		if err != nil {
+			return pvfversion.FileChange{}, false
+		}
+		disp := after.Path(ai)
+		if disp == "" {
+			disp = displayFallback
+		}
+		return pvfversion.FileChange{
+			Path:        canonicalKey,
+			DisplayPath: pvfversion.DisplayPath(disp),
+			Operation:   pvfversion.OperationAdd,
+			AfterType:   aType,
+		}, true
+	}
+	if bok && !aok {
+		bType, _, err := before.FileContentInfo(bi)
+		if err != nil {
+			return pvfversion.FileChange{}, false
+		}
+		disp := before.Path(bi)
+		if disp == "" {
+			disp = displayFallback
+		}
+		return pvfversion.FileChange{
+			Path:        canonicalKey,
+			DisplayPath: pvfversion.DisplayPath(disp),
+			Operation:   pvfversion.OperationDelete,
+			BeforeType:  bType,
+		}, true
+	}
+
+	// 双方均存在条目
+	bType, bSize, err1 := before.FileContentInfo(bi)
+	aType, aSize, err2 := after.FileContentInfo(ai)
+	if err1 != nil || err2 != nil {
+		return pvfversion.FileChange{}, false
+	}
+	disp := after.Path(ai)
+	if disp == "" {
+		disp = before.Path(bi)
+	}
+	if disp == "" {
+		disp = displayFallback
+	}
+	if bType != aType {
+		return pvfversion.FileChange{
+			Path:        canonicalKey,
+			DisplayPath: pvfversion.DisplayPath(disp),
+			Operation:   pvfversion.OperationModify,
+			BeforeType:  bType,
+			AfterType:   aType,
+		}, true
+	}
+
+	isText := bType == pvf.TypeScript || bType == pvf.TypeUnicode
+	if !isText {
+		if bSize != aSize {
+			return pvfversion.FileChange{
+				Path:        canonicalKey,
+				DisplayPath: pvfversion.DisplayPath(disp),
+				Operation:   pvfversion.OperationModify,
+				BeforeType:  bType,
+				AfterType:   aType,
+			}, true
+		}
+		bRaw, err1 := before.RawBytes(bi)
+		aRaw, err2 := after.RawBytes(ai)
+		if err1 != nil || err2 != nil || !bytes.Equal(bRaw, aRaw) {
+			return pvfversion.FileChange{
+				Path:        canonicalKey,
+				DisplayPath: pvfversion.DisplayPath(disp),
+				Operation:   pvfversion.OperationModify,
+				BeforeType:  bType,
+				AfterType:   aType,
+				BeforeHash:  archiveDiffContentHash(bType, bRaw),
+				AfterHash:   archiveDiffContentHash(aType, aRaw),
+			}, true
+		}
+		return pvfversion.FileChange{}, false
+	}
+
+	// 文本或脚本文件，比较反编译后的标准文本
+	bRaw, err1 := before.RawBytes(bi)
+	aRaw, err2 := after.RawBytes(ai)
+	if err1 != nil || err2 != nil {
+		return pvfversion.FileChange{}, false
+	}
+	bText, err1 := before.CanonicalTextFromRaw(bi, bRaw)
+	aText, err2 := after.CanonicalTextFromRaw(ai, aRaw)
+	if err1 != nil || err2 != nil || bText != aText {
+		return pvfversion.FileChange{
+			Path:        canonicalKey,
+			DisplayPath: pvfversion.DisplayPath(disp),
+			Operation:   pvfversion.OperationModify,
+			BeforeType:  bType,
+			AfterType:   aType,
+			BeforeHash:  archiveDiffContentHash(bType, []byte(bText)),
+			AfterHash:   archiveDiffContentHash(aType, []byte(aText)),
+		}, true
+	}
+
+	return pvfversion.FileChange{}, false
 }
 
 // mergeDiffFileEntry 合并单个文件条目，跨归档文本文件使用反编译文本写入确保字符串表入池
