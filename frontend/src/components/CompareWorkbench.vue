@@ -170,14 +170,22 @@ async function handleMergeSelected() {
 function renderLabel({ option }: { option: TreeOption }) {
   const node = (option as DiffTreeNode).node;
   const op = diffOperation(node.operation, diff.reverse);
-  const checked = diff.isSelected(node.path);
+  const checked = node.isDir ? diff.isDirSelected(node.path, node.count) : diff.isSelected(node.path);
+  const indeterminate = node.isDir ? diff.isDirIndeterminate(node.path, node.count) : false;
 
   const checkboxVNode = h(NCheckbox, {
     checked,
+    indeterminate,
     size: "small",
     style: "margin-right: 4px;",
     onClick: (e: MouseEvent) => e.stopPropagation(),
-    "onUpdate:checked": () => diff.toggleSelect(node.path),
+    "onUpdate:checked": () => {
+      if (node.isDir) {
+        void diff.toggleSelectDir(node.path, node.count);
+      } else {
+        diff.toggleSelect(node.path);
+      }
+    },
   });
 
   return h("span", { class: ["tree-label", node.isDir ? "tree-label--dir" : `operation-${op}`], title: node.path }, [

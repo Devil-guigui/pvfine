@@ -4,7 +4,7 @@ import type { ArchiveDiffFile } from "../bindings/pvfine/services/models";
 import { diffOperation, orientArchiveDiff } from "../src/archiveDiff";
 const mocks = vi.hoisted(() => ({
   Start: vi.fn(), Release: vi.fn(), Status: vi.fn(), Children: vi.fn(), FilteredChildren: vi.fn(), FileDiff: vi.fn(), Cancel: vi.fn(), SelectArchive: vi.fn(),
-  archiveDiffDrafts: vi.fn(), events: new Map<string, () => void>(),
+  FlatFiles: vi.fn(), archiveDiffDrafts: vi.fn(), events: new Map<string, () => void>(),
 }));
 vi.mock("../bindings/pvfine/services", () => ({ ArchiveDiffService: mocks }));
 vi.mock("../src/stores/editor", () => ({ useEditorStore: () => ({ archiveDiffDrafts: mocks.archiveDiffDrafts }) }));
@@ -90,4 +90,16 @@ test("根节点返回前保持加载状态，取消后忽略旧树", async () =>
   pending.resolve([]); await refresh;
   expect(store.tree).toEqual([]);
   expect(store.status?.state).toBe("cancelled");
+});
+test("筛选后勾选目录仅选择匹配项，不包含隐藏文件", async () => {
+  const store = useArchiveDiffStore(); store.open(); store.otherPath = "other.pvf"; await store.refresh();
+  mocks.FlatFiles.mockResolvedValue([
+    { path: "equipment/weapon/sword.equ", name: "sword.equ", isDir: false, operation: "add", count: 1 },
+    { path: "equipment/weapon/axe.equ", name: "axe.equ", isDir: false, operation: "add", count: 1 },
+  ]);
+  store.filterOperation = "add";
+  await store.toggleSelectDir("equipment/weapon", 2);
+  expect(store.selectedPaths).toEqual(new Set(["equipment/weapon/sword.equ", "equipment/weapon/axe.equ"]));
+  expect(store.isDirSelected("equipment/weapon", 2)).toBe(true);
+  expect(store.isDirIndeterminate("equipment", 5)).toBe(true);
 });

@@ -94,39 +94,73 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     originalDraftText.value = "";
   }
 
-  function isSelected(path: string): boolean {
-    const lower = path.toLowerCase();
-    if (selectedPaths.value.has(lower)) return true;
-    let p = lower;
-    while (true) {
-      const idx = p.lastIndexOf("/");
-      if (idx <= 0) break;
-      p = p.substring(0, idx);
-      if (selectedPaths.value.has(p)) return true;
+  const dirSelectedCount = computed(() => {
+    const counts = new Map<string, number>();
+    for (const raw of selectedPaths.value) {
+      let p = raw.toLowerCase();
+      while (true) {
+        const idx = p.lastIndexOf("/");
+        if (idx <= 0) break;
+        p = p.substring(0, idx);
+        counts.set(p, (counts.get(p) ?? 0) + 1);
+      }
     }
-    return false;
+    return counts;
+  });
+
+  function isSelected(path: string): boolean {
+    return selectedPaths.value.has(path.toLowerCase());
+  }
+
+  function isDirSelected(path: string, count: number): boolean {
+    if (count <= 0) return false;
+    const c = dirSelectedCount.value.get(path.toLowerCase()) ?? 0;
+    return c >= count;
+  }
+
+  function isDirIndeterminate(path: string, count: number): boolean {
+    if (count <= 0) return false;
+    const c = dirSelectedCount.value.get(path.toLowerCase()) ?? 0;
+    return c > 0 && c < count;
   }
 
   function toggleSelect(path: string) {
     const lower = path.toLowerCase();
     const next = new Set(selectedPaths.value);
-    if (isSelected(lower)) {
+    if (next.has(lower)) {
       next.delete(lower);
-      let p = lower;
-      while (true) {
-        const idx = p.lastIndexOf("/");
-        if (idx <= 0) break;
-        p = p.substring(0, idx);
-        next.delete(p);
-      }
     } else {
       next.add(lower);
     }
     selectedPaths.value = next;
   }
 
-  function toggleSelectDir(path: string) {
-    toggleSelect(path);
+  async function getMatchingFilesUnderDir(dirPath: string): Promise<string[]> {
+    const id = status.value?.id;
+    if (!id) return [];
+    const op = getBackendOperation(filterOperation.value);
+    const res = await ArchiveDiffService.FlatFiles(id, searchQuery.value, op);
+    const normalizedDir = dirPath ? dirPath.toLowerCase().replace(/\/+$/, "") + "/" : "";
+    return (res ?? [])
+      .filter((f) => !f.isDir && (!normalizedDir || f.path.toLowerCase().startsWith(normalizedDir)))
+      .map((f) => f.path);
+  }
+
+  async function toggleSelectDir(path: string, _totalCount?: number) {
+    const matching = await getMatchingFilesUnderDir(path);
+    if (matching.length === 0) return;
+    const next = new Set(selectedPaths.value);
+    const allSelected = matching.every((p) => next.has(p.toLowerCase()));
+    if (allSelected) {
+      for (const p of matching) {
+        next.delete(p.toLowerCase());
+      }
+    } else {
+      for (const p of matching) {
+        next.add(p.toLowerCase());
+      }
+    }
+    selectedPaths.value = next;
   }
 
   function selectAll(paths: string[]) {
@@ -138,15 +172,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   function deselectPaths(paths: string[]): void {
     const next = new Set(selectedPaths.value);
     for (const p of paths) {
-      const lower = p.toLowerCase();
-      next.delete(lower);
-      let parent = lower;
-      while (true) {
-        const idx = parent.lastIndexOf("/");
-        if (idx <= 0) break;
-        parent = parent.substring(0, idx);
-        next.delete(parent);
-      }
+      next.delete(p.toLowerCase());
     }
     selectedPaths.value = next;
   }
@@ -593,7 +619,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     selectedPaths, merging, draftPath, draftText, originalDraftText, isDraftDirty,
     showDraftConfirmModal, pendingSwitchNode, pendingCloseTab,
     open, close, selectArchive, refresh, loadRootTree, loadChildren, openFile, openFileDirect, cancel,
-    toggleSelect, selectAll, deselectAll, clearSelection, isSelected,
+    toggleSelect, selectAll, deselectAll, clearSelection, isSelected, isDirSelected, isDirIndeterminate,
     toggleSelectDir, searchTree, clearSearch, collapseAll, setFilterOperation, toggleReverse,
     loadFlatFiles, refreshCurrentView, mergeSelected, mergeSingleFile, mergeText,
     setDraft, updateDraftText, discardDraft,
