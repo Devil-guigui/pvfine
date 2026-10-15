@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   Close: vi.fn(),
   IndexStatus: vi.fn(),
   RebuildSearchIndex: vi.fn(),
+  SetTextEncoding: vi.fn(),
 }));
 const events = vi.hoisted(() => new Map<string, (event: unknown) => void>());
 vi.mock("@wailsio/runtime", () => ({
@@ -190,4 +191,21 @@ test("a stale rebuild response cannot overwrite the ready event", async () => {
   await rebuilding;
   expect(store.indexReady).toBe(true);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+
+test("encoding switch updates archive info and reload resets string table stats", async () => {
+  const store = useArchiveStore();
+  const info = { path: "/game/Script.pvf", textEncoding: "GBK", textEncodingLabel: "GBK" };
+  store.info = { ...info, textEncoding: "auto" } as NonNullable<typeof store.info>;
+  api.SetTextEncoding.mockResolvedValue(info);
+  await store.setTextEncoding("GBK");
+  expect(api.SetTextEncoding).toHaveBeenCalledWith("GBK");
+  expect(store.info?.textEncoding).toBe("GBK");
+  store.stringTableIndex.revision = 20;
+  emit("archive:reloaded", info);
+  expect(store.stringTableIndex.revision).toBe(0);
+  api.SetTextEncoding.mockRejectedValue(new Error("请先保存"));
+  await expect(store.setTextEncoding("auto")).rejects.toThrow("请先保存");
+  expect(store.info?.textEncoding).toBe("GBK");
 });

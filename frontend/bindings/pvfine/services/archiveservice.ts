@@ -250,6 +250,13 @@ export function SelectImportFilesDialog(): $CancellablePromise<string[] | null> 
 }
 
 /**
+ * SetTextEncoding reinterprets native text without rewriting the archive.
+ */
+export function SetTextEncoding(encoding: string): $CancellablePromise<$models.ArchiveInfo> {
+    return $Call.ByID(3088270803, encoding);
+}
+
+/**
  * SuggestDirectories returns directory paths with a case-insensitive prefix
  * match. An empty prefix returns no suggestions to avoid flooding the UI.
  */

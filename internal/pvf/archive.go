@@ -99,7 +99,8 @@ type Archive struct {
 	act60Sources map[uint64]string // edited ACT60 sources, keyed by stable file identity
 	tw           *twArchive        // immutable TW transport and index metadata
 
-	sourcePath string // file the archive was opened from
+	sourcePath   string // file the archive was opened from
+	textEncoding string // optional native text / narrow pool codec override
 
 	tableOff, hashOff, nameOff, grpiOff, bodyOff int
 	hashSize, nameSize, grpiSize                 int
@@ -242,6 +243,18 @@ func Open(path string) (*Archive, error) {
 // keys have to be borrowed from the directory of the file they came from.
 // An empty sidecarDir behaves like Open.
 func OpenWithSidecars(path, sidecarDir string) (*Archive, error) {
+	return OpenWithTextEncoding(path, sidecarDir, "auto")
+}
+
+// OpenWithTextEncoding applies the selected codec during the initial parse.
+// sidecarDir has the same meaning as in OpenWithSidecars.
+func OpenWithTextEncoding(path, sidecarDir, encoding string) (*Archive, error) {
+	if _, err := textCodec(encoding); err != nil {
+		return nil, err
+	}
+	if encoding == "auto" {
+		encoding = ""
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -249,7 +262,7 @@ func OpenWithSidecars(path, sidecarDir string) (*Archive, error) {
 	if sidecarDir == "" {
 		sidecarDir = filepath.Dir(path)
 	}
-	a, err := parseOwned(data, sidecarDir, true)
+	a, err := parseOwned(data, sidecarDir, true, encoding)
 	if err != nil {
 		return nil, err
 	}
@@ -268,26 +281,26 @@ func parse(data []byte, sidecarDir string) (*Archive, error) {
 	return parseOwned(data, sidecarDir, false)
 }
 
-func parseOwned(data []byte, sidecarDir string, owned bool) (*Archive, error) {
+func parseOwned(data []byte, sidecarDir string, owned bool, codecs ...string) (*Archive, error) {
 	if tree, body, count, legacy, ok := probeACT60(data); ok {
-		return parseACT60(data, tree, body, count, legacy)
+		return parseACT60(data, tree, body, count, legacy, codecs...)
 	}
 	if bytes.HasPrefix(data, []byte(act60Signature)) {
 		return nil, fmt.Errorf("%w: ACT60 directory header or checksum", ErrInvalidSection)
 	}
 	if isTW(data) {
-		return parseTW(data)
+		return parseTW(data, codecs...)
 	}
 	detected, err := detectArchive(data, sidecarDir, owned)
 	if err != nil {
 		return nil, err
 	}
-	return parseDetected(detected)
+	return parseDetected(detected, codecs...)
 }
 
 // parseDetected is the shared logical-container parser, independent of file
 // discovery and physical page unlocking.
-func parseDetected(detected detectedArchive) (*Archive, error) {
+func parseDetected(detected detectedArchive, codecs ...string) (*Archive, error) {
 	data := detected.data
 	renderer := defaultScriptRenderer()
 	a := &Archive{
@@ -302,6 +315,9 @@ func parseDetected(detected detectedArchive) (*Archive, error) {
 		canonicalScriptRenderer: renderer,
 	}
 
+	if len(codecs) > 0 {
+		a.textEncoding = codecs[0]
+	}
 	a.hdr, a.guard, a.keys = detected.hdr, detected.guard, detected.keys
 	a.format, a.pageKeys = detected.format, detected.pageKeys
 
@@ -669,11 +685,15 @@ type ArchiveInfoView struct {
 	Format            string            `json:"format"`
 	ContentRules      ContentRules      `json:"contentRules"`
 	WriteCapabilities WriteCapabilities `json:"writeCapabilities"`
+	TextEncoding      string            `json:"textEncoding"`
+	TextEncodingLabel string            `json:"textEncodingLabel"`
 }
 
 // Info returns the current state snapshot.
 func (a *Archive) Info() ArchiveInfoView {
 	return ArchiveInfoView{
+		TextEncoding:      a.TextEncoding(),
+		TextEncodingLabel: a.TextEncodingLabel(),
 		Path:              a.sourcePath,
 		FileCount:         int32(len(a.items)),
 		GroupCount:        a.hdr.GroupCount,

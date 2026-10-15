@@ -70,7 +70,7 @@ func (c *core) openArchive(path string) (ArchiveInfo, error) {
 	if _, err := os.Stat(path); err != nil {
 		return ArchiveInfo{}, err
 	}
-	a, err := pvf.Open(path)
+	a, err := c.openArchiveWithRememberedTextEncoding(path, path, "")
 	if err != nil {
 		return ArchiveInfo{}, err
 	}
@@ -969,4 +969,47 @@ func clonePathAnnotationChain(values map[string][]TreeAnnotation, filePath strin
 		return nil
 	}
 	return result
+}
+
+// SetTextEncoding reinterprets native text without rewriting the archive.
+func (s *ArchiveService) SetTextEncoding(encoding string) (ArchiveInfo, error) {
+	s.c.mu.Lock()
+	if s.c.archive == nil {
+		s.c.mu.Unlock()
+		return ArchiveInfo{}, ErrNoArchive
+	}
+	if s.c.versionLoading || s.c.unpackRunning.Load() {
+		s.c.mu.Unlock()
+		return ArchiveInfo{}, errors.New("请等待版本控制加载或解包完成后再切换编码")
+	}
+	current := s.c.archive
+	if current.TextEncoding() == encoding {
+		info := current.Info()
+		s.c.mu.Unlock()
+		return info, nil
+	}
+	next, err := current.WithTextEncoding(encoding)
+	if err != nil {
+		s.c.mu.Unlock()
+		return ArchiveInfo{}, err
+	}
+	prepared, err := prepareArchiveDerivedIndexes(next)
+	if err != nil {
+		s.c.mu.Unlock()
+		return ArchiveInfo{}, err
+	}
+	if err := s.c.settings.rememberArchiveTextEncoding(current.SourcePath(), next.TextEncoding()); err != nil {
+		closePreparedArchiveIndexes(prepared)
+		s.c.mu.Unlock()
+		return ArchiveInfo{}, err
+	}
+	err = s.c.installPreparedArchiveIndexesLocked(next, prepared, false)
+	info := next.Info()
+	s.c.mu.Unlock()
+	if err != nil {
+		return ArchiveInfo{}, err
+	}
+	emitEvent("archive:reloaded", info)
+	s.c.startSearchIndexForced()
+	return info, nil
 }

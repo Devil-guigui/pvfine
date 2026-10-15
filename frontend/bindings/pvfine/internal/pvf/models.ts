@@ -16,6 +16,8 @@ export interface ArchiveInfoView {
     "format": string;
     "contentRules": ContentRules;
     "writeCapabilities": WriteCapabilities;
+    "textEncoding": string;
+    "textEncodingLabel": string;
 }
 
 /**

@@ -233,6 +233,10 @@ export const useArchiveStore = defineStore("archive", () => {
     return indexStatus.value;
   }
 
+  async function setTextEncoding(encoding: string): Promise<void> {
+    info.value = await ArchiveService.SetTextEncoding(encoding);
+  }
+
   async function listRegistrationOptions(fileIndex: number): Promise<FileRegistrationOptions | null> {
     return (await ArchiveService.ListRegistrationOptions(fileIndex)) ?? null;
   }
@@ -309,6 +313,7 @@ export const useArchiveStore = defineStore("archive", () => {
     void refreshInfo();
   });
   Events.On("archive:reloaded", (event: any) => {
+    stringTableIndex.value = readStringTableIndex(null);
     const data = eventData(event);
     if (data?.path) info.value = data;
     else void refreshInfo();
@@ -351,6 +356,7 @@ export const useArchiveStore = defineStore("archive", () => {
     close,
     refreshInfo,
     rebuildSearchIndex,
+    setTextEncoding,
     listRegistrationOptions,
     registerFileToList,
     indexHashTargets,

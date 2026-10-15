@@ -80,7 +80,7 @@ func (a *Archive) act60ScriptText(index int32) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return act60DecodeText(native), nil
+		return a.decodeNativeText(native), nil
 	}
 	raw, err := a.RawBytes(index)
 	if err != nil {

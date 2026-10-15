@@ -100,7 +100,7 @@ func (a *Archive) resolveStringLocked(magicOff int32) string {
 	if magicOff&1 != 0 {
 		s = readUTF16(a.strW, int(magicOff>>1)*2)
 	} else {
-		s = readUTF8(a.strA, int(magicOff>>1))
+		s = a.decodeNarrowText([]byte(readUTF8(a.strA, int(magicOff>>1))))
 	}
 	a.resolveCache[magicOff] = s
 	a.resolveCacheOrder = append(a.resolveCacheOrder, magicOff)
@@ -185,7 +185,7 @@ func (a *Archive) ensureStringIndexesLocked() {
 			vEnd = pos + end
 		}
 		if vEnd > pos {
-			v := string(a.strA[pos:vEnd])
+			v := a.decodeNarrowText(a.strA[pos:vEnd])
 			if _, ok := a.strAIdx[v]; !ok {
 				a.strAIdx[v] = int32(pos << 1)
 			}

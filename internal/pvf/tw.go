@@ -87,7 +87,7 @@ func (tw *twArchive) payload(data []byte, i int32) ([]byte, error) {
 	return raw[:e.size], nil
 }
 
-func parseTW(data []byte) (*Archive, error) {
+func parseTW(data []byte, codecs ...string) (*Archive, error) {
 	if !isTW(data) {
 		return nil, ErrBadSignature
 	}
@@ -107,6 +107,9 @@ func parseTW(data []byte) (*Archive, error) {
 	a := New()
 	a.data = data
 	a.format = twProfile
+	if len(codecs) > 0 {
+		a.textEncoding = codecs[0]
+	}
 	tw := &twArchive{uuid: bytes.Clone(data[4 : 4+n]), version: binary.LittleEndian.Uint32(h), body: int(body), directory: tree, references: make(map[twReference]int32)}
 	a.tw = tw
 	a.bodyOff = tw.body
@@ -195,7 +198,7 @@ func parseTW(data []byte) (*Archive, error) {
 		if start < bias || end < start || end+4 > uint64(len(table)) {
 			return nil, ErrInvalidSection
 		}
-		tw.strings[i] = appendString(twDecodeText(table[4+start : 4+end]))
+		tw.strings[i] = appendString(a.decodeNativeText(table[4+start : 4+end]))
 	}
 	// Inspect native streams once, without retaining decrypted payloads. This
 	// establishes exact logical sizes and immutable reference offsets for the
@@ -209,9 +212,9 @@ func parseTW(data []byte) (*Archive, error) {
 		e := &tw.entries[i]
 		it := &a.items[i]
 		path := a.Path(int32(i))
-		if strings.HasSuffix(path, ".str") || (strings.HasSuffix(path, ".nut") && !bytes.ContainsRune(raw, 0)) {
+		if strings.HasSuffix(path, ".str") || (strings.HasSuffix(path, ".nut") && a.nativePayloadIsText(raw)) {
 			e.typ = TypeUnicode
-			it.size = int32(len(utf16le(twDecodeText(raw))))
+			it.size = int32(len(utf16le(a.decodeNativeText(raw))))
 		} else if len(raw) >= 2 && raw[0] == 0xB0 && raw[1] == 0xD0 {
 			e.typ = TypeScript
 			it.size = int32((len(raw) - 2) / 5 * 5)
@@ -263,7 +266,7 @@ func (a *Archive) twChunk(ci int32) ([]byte, error) {
 	}
 	e := a.tw.entries[ci]
 	if e.typ == TypeUnicode {
-		return utf16le(twDecodeText(raw)), nil
+		return utf16le(a.decodeNativeText(raw)), nil
 	}
 	if e.typ != TypeScript {
 		return raw, nil
@@ -332,9 +335,9 @@ func (a *Archive) saveTWWithProgress(w io.Writer, progress SaveProgressFunc) err
 		if i, ok := indices[off]; ok {
 			return i, nil
 		}
-		encoded, err := traditionalchinese.Big5.NewEncoder().Bytes([]byte(a.ResolveString(off)))
+		encoded, err := a.encodeNativeText(a.ResolveString(off))
 		if err != nil {
-			return 0, fmt.Errorf("TW 字符串无法用 Big5 编码: %w", err)
+			return 0, fmt.Errorf("TW 字符串无法用所选编码写入: %w", err)
 		}
 		i := uint32(len(tw.strings) + len(added))
 		indices[off] = i
@@ -376,7 +379,7 @@ func (a *Archive) saveTWWithProgress(w io.Writer, progress SaveProgressFunc) err
 		} else {
 			var err error
 			if it.typ == TypeUnicode {
-				raw, err = traditionalchinese.Big5.NewEncoder().Bytes([]byte(stringFromUTF16(raw)))
+				raw, err = a.encodeNativeText(stringFromUTF16(raw))
 			} else if it.typ == TypeScript {
 				raw, err = a.encodeTWScript(raw, stringIndex)
 			}
@@ -447,7 +450,7 @@ func (a *Archive) saveTWWithProgress(w io.Writer, progress SaveProgressFunc) err
 	out.Write(body.Bytes())
 	packed := out.Bytes()
 	// Validate the complete result before exposing bytes to the writer.
-	next, err := parseTW(packed)
+	next, err := parseTW(packed, a.textEncoding)
 	if err != nil {
 		return err
 	}

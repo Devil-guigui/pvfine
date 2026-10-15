@@ -71,10 +71,13 @@ func probeACT60(data []byte) ([]byte, int, uint32, bool, bool) {
 	return tree, start + int(size), count, legacy, true
 }
 
-func parseACT60(data, tree []byte, body int, count uint32, legacy bool) (*Archive, error) {
+func parseACT60(data, tree []byte, body int, count uint32, legacy bool, codecs ...string) (*Archive, error) {
 	a := New()
 	a.data = data
 	a.format = act60Profile
+	if len(codecs) > 0 {
+		a.textEncoding = codecs[0]
+	}
 	act60 := &act60Archive{directory: tree, prefix: data[:body-len(tree)-12], legacy: legacy, body: body, entries: make([]act60Entry, 0, count)}
 	a.act60 = act60
 	a.bodyOff = body
@@ -122,13 +125,13 @@ func parseACT60(data, tree []byte, body int, count uint32, legacy bool) (*Archiv
 		if err != nil {
 			return nil, err
 		}
-		e.text = !bytes.ContainsRune(raw, 0)
+		e.text = a.nativePayloadIsText(raw)
 		act60.entries[i].text = e.text
 		typ := int32(0) // Native binary ANI and other resources are retained verbatim.
 		size := len(raw)
 		if e.text {
 			typ = TypeUnicode
-			source := act60DecodeText(raw)
+			source := a.decodeNativeText(raw)
 			size = len(utf16le(source))
 			if isACT60Script(p, source) {
 				tokens, err := a.encodeACT60Script(source)
@@ -195,7 +198,7 @@ func (a *Archive) act60Chunk(index int32) ([]byte, error) {
 		return nil, err
 	}
 	if a.act60.entries[index].text {
-		return utf16le(act60DecodeText(raw)), nil
+		return utf16le(a.decodeNativeText(raw)), nil
 	}
 	return raw, nil
 }

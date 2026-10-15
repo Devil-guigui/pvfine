@@ -11,7 +11,7 @@ import {
   Edit20Regular,
   FolderOpen20Regular,
 } from "@vicons/fluent";
-import { NButton, NIcon, NProgress, NTooltip, useMessage } from "naive-ui";
+import { NButton, NDropdown, NIcon, NProgress, NTooltip, useMessage } from "naive-ui";
 import { useArchiveStore } from "../stores/archive";
 import { useEditorStore } from "../stores/editor";
 import { useImageStore } from "../stores/images";
@@ -27,6 +27,28 @@ const advancedSearch = useAdvancedSearchStore();
 const settings = useSettingsStore();
 const message = useMessage();
 const rebuildingIndex = ref(false);
+const switchingEncoding = ref(false);
+const encodingOptions = [
+  { label: "自动（按归档格式）", key: "auto" },
+  ...["UTF-8", "GBK", "Big5", "CP949", "UTF-16LE"].map((key) => ({ label: key, key })),
+];
+
+async function onSwitchEncoding(encoding: string): Promise<void> {
+  if (switchingEncoding.value || encoding === archive.info?.textEncoding) return;
+  if (editor.dirtyCount > 0 || archive.modifiedCount > 0) {
+    message.warning("请先保存所有编辑及归档修改，再切换编码");
+    return;
+  }
+  switchingEncoding.value = true;
+  try {
+    await archive.setTextEncoding(encoding);
+    message.success("已切换归档文本编码");
+  } catch (error: any) {
+    message.error(`切换编码失败：${error?.message ?? error}`);
+  } finally {
+    switchingEncoding.value = false;
+  }
+}
 
 const currentPath = computed(() => editor.activeTab?.path ?? "");
 const sizeText = computed(() => {
@@ -390,6 +412,26 @@ async function onRebuildSearchIndex(): Promise<void> {
           </NTooltip>
         </template>
       </template>
+
+      <span class="sb-sep" />
+      <NDropdown
+        trigger="click"
+        :options="encodingOptions"
+        :value="archive.info?.textEncoding ?? 'auto'"
+        :disabled="switchingEncoding || archive.loading"
+        @select="onSwitchEncoding"
+      >
+        <button
+          class="sb-item sb-interactive sb-encoding"
+          :disabled="switchingEncoding || archive.loading"
+          aria-label="切换归档文本编码"
+          title="切换编码以修正乱码；影响原生文本及窄字符串池，UTF-16LE 文本保持固定格式。未修改文件保留原始字节。"
+        >
+          {{ switchingEncoding ? "切换编码中…" : archive.info?.textEncodingLabel }}
+          <span v-if="archive.info?.textEncoding === 'auto' && !switchingEncoding">（自动）</span>
+          <span aria-hidden="true">⌄</span>
+        </button>
+      </NDropdown>
     </template>
     <span v-else class="sb-spacer" />
   </div>
@@ -535,4 +577,12 @@ async function onRebuildSearchIndex(): Promise<void> {
   padding-top: 4px;
   margin-top: 2px;
 }
+.sb-encoding {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  flex-shrink: 0;
+}
+.sb-encoding:disabled { cursor: wait; opacity: 0.6; }
 </style>

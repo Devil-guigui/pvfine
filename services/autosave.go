@@ -305,7 +305,7 @@ func (s *AutosaveService) Restore() (ArchiveInfo, error) {
 	}
 	// Paged110 containers keep their page keys next to the original file, so the
 	// backup borrows the sidecar directory instead of carrying a copy.
-	backup, err := pvf.OpenWithSidecars(cachePath, filepath.Dir(meta.SourcePath))
+	backup, err := s.c.openArchiveWithRememberedTextEncoding(cachePath, meta.SourcePath, filepath.Dir(meta.SourcePath))
 	if err != nil {
 		return ArchiveInfo{}, fmt.Errorf("打开备份缓存失败: %w", err)
 	}

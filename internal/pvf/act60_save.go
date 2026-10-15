@@ -10,7 +10,6 @@ import (
 	"math/bits"
 
 	"golang.org/x/text/encoding/korean"
-	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 func act60Encrypt(raw []byte, seed uint32) ([]byte, uint32) {
@@ -65,9 +64,9 @@ func (a *Archive) encodeACT60Payload(index int32, raw []byte, old *act60Entry) (
 			return append([]byte{0xef, 0xbb, 0xbf}, []byte(text)...), nil
 		}
 	}
-	encoded, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(text))
+	encoded, err := a.encodeNativeText(text)
 	if err != nil {
-		return nil, fmt.Errorf("ACT60 文本无法用 GBK 编码: %w", err)
+		return nil, fmt.Errorf("ACT60 文本无法用所选编码写入: %w", err)
 	}
 	return encoded, nil
 }
@@ -182,7 +181,7 @@ func (a *Archive) saveACT60(w io.Writer, progress SaveProgressFunc) error {
 	if !ok {
 		return ErrInvalidSection
 	}
-	next, err := parseACT60(packed.Bytes(), decoded, offset, count, legacy)
+	next, err := parseACT60(packed.Bytes(), decoded, offset, count, legacy, a.textEncoding)
 	if err != nil {
 		return err
 	}

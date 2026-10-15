@@ -398,7 +398,7 @@ func archiveIndexIdentity(a *pvf.Archive) (string, string, error) {
 		return "", "", err
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "sqlite:5\x00metadata:%d\x00", searchIndexCacheVersion)
+	fmt.Fprintf(h, "sqlite:5\x00metadata:%d\x00encoding:%s\x00", searchIndexCacheVersion, a.TextEncoding())
 	fmt.Fprintf(h, "%s\x00%d\x00%d\x00%d\x00%d\x00%d", filepath.Clean(path), info.Size(), info.ModTime().UnixNano(), a.FileCount(), a.Header().GroupCount, a.Header().BodySize)
 	if digest, clean := a.SavedContentHash(); clean {
 		fmt.Fprintf(h, "\x00content:%s", digest)

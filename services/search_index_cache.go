@@ -33,6 +33,7 @@ type searchIndexCacheIdentity struct {
 	GroupCount     int32
 	BodySize       int32
 	Paged110       bool
+	TextEncoding   string
 }
 
 type persistedIndexedMetadata struct {
@@ -113,6 +114,7 @@ func searchIndexCacheIdentityForArchive(a *pvf.Archive) (searchIndexCacheIdentit
 		GroupCount:     archiveInfo.GroupCount,
 		BodySize:       archiveInfo.BodySize,
 		Paged110:       archiveInfo.Paged110,
+		TextEncoding:   archiveInfo.TextEncoding,
 	}, nil
 }
 
