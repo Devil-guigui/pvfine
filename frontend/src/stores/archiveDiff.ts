@@ -59,6 +59,20 @@ export function findNodeByPath(nodes: DiffTreeNode[], targetPath: string): DiffT
   return null;
 }
 
+/**
+ * 将旧树中已经展开加载过 children 的子树平滑保留并嫁接给新树，
+ * 避免整树重新拉取时节点坍缩引发的视口抖动与闪烁。
+ * @author flobit
+ */
+export function preserveTreeExpansion(newNodes: DiffTreeNode[], oldNodes: DiffTreeNode[]): void {
+  for (const newNode of newNodes) {
+    const oldNode = findNodeByPath(oldNodes, newNode.node.path);
+    if (oldNode?.children && Array.isArray(oldNode.children)) {
+      newNode.children = oldNode.children;
+    }
+  }
+}
+
 export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   const visible = ref(false);
   const otherPath = ref("");
@@ -323,7 +337,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   const savedExpandedKeys = ref<Array<string | number> | null>(null);
   let searchTreeSeq = 0;
 
-  async function searchTree(query: string) {
+  async function searchTree(query: string, silent = false) {
     const q = query.trim();
     if (!q) {
       clearSearch();
@@ -345,7 +359,12 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
       const limited = files.slice(0, 1000);
       const { tree: resultTree, dirKeys } = buildTreeFromFiles(limited);
       searchedTreeNodes.value = resultTree;
-      expandedKeys.value = dirKeys;
+      if (!silent) {
+        expandedKeys.value = dirKeys;
+      } else {
+        const mergedKeys = new Set([...expandedKeys.value, ...dirKeys]);
+        expandedKeys.value = Array.from(mergedKeys);
+      }
     } catch {
       if (currentSeq === searchTreeSeq) {
         searchedTreeNodes.value = [];
@@ -502,13 +521,80 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     } catch (err) { if (token === epoch) error.value = errorMessage(err); }
   }
 
-  async function refreshCurrentView(): Promise<void> {
+
+  /**
+   * 平滑拉取根节点并保留现有所有已展开子树，避免抖动。
+   * @author flobit
+   */
+  async function refreshTreePreservingExpansion(): Promise<void> {
+    const id = status.value?.id;
+    if (!id) return;
+    const token = epoch;
+    const op = getBackendOperation(filterOperation.value);
+    try {
+      const nodes = await ArchiveDiffService.FilteredChildren(id, "", op);
+      if (token !== epoch) return;
+      const newRoots = treeNodes(nodes ?? []);
+      preserveTreeExpansion(newRoots, tree.value);
+      tree.value = newRoots;
+    } catch (err) {
+      if (token === epoch) error.value = errorMessage(err);
+    }
+  }
+
+  /**
+   * 针对保存的单文件，局部精准更新该文件所在目录的子节点与祖先统计计数，
+   * 完全不触动树上其它未修改目录与节点，彻底杜绝闪烁和抖动。
+   * @author flobit
+   */
+  async function refreshTreeForSavedFile(savedPath: string): Promise<void> {
+    const id = status.value?.id;
+    if (!id) return;
+    const op = getBackendOperation(filterOperation.value);
+
+    const normalized = savedPath.replaceAll("\\", "/").replace(/^\/+/, "");
+    const lastSlash = normalized.lastIndexOf("/");
+    const parentDir = lastSlash > 0 ? normalized.substring(0, lastSlash) : "";
+
+    if (parentDir) {
+      const parentNode = findNodeByPath(tree.value, parentDir);
+      if (parentNode) {
+        // 仅拉取该父目录下最新的子节点列表
+        const freshNodes = await ArchiveDiffService.FilteredChildren(id, parentDir, op);
+        parentNode.children = treeNodes(freshNodes ?? []);
+        parentNode.node.count = (freshNodes ?? []).length;
+
+        // 静默同步顶级根目录的 count 计数值
+        const rootNodes = await ArchiveDiffService.FilteredChildren(id, "", op);
+        if (rootNodes) {
+          for (const r of rootNodes) {
+            const match = findNodeByPath(tree.value, r.path);
+            if (match) match.node.count = r.count;
+          }
+        }
+        tree.value = [...tree.value];
+        return;
+      }
+    }
+
+    // 若文件在根目录或尚未加载展开父节点，走平滑保持整树刷新
+    await refreshTreePreservingExpansion();
+  }
+
+  /**
+   * 刷新当前差异视图（平铺列表或目录树）。
+   * 若传入 savedPath，则执行静默/局部精准更新，避免全量重载引发的视口抖动。
+   * @author flobit
+   */
+  async function refreshCurrentView(savedPath?: string): Promise<void> {
     if (listMode.value === "flat") {
-      await loadFlatFiles();
+      await loadFlatFiles(true);
     } else if (searchQuery.value.trim()) {
-      void searchTree(searchQuery.value);
+      await searchTree(searchQuery.value, true);
+    } else if (savedPath) {
+      await refreshTreeForSavedFile(savedPath);
     } else {
-      await loadRootTree();
+      await refreshTreePreservingExpansion();
     }
   }
 
@@ -525,13 +611,15 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     await refreshCurrentView();
   }
 
-  async function loadFlatFiles() {
+  async function loadFlatFiles(silent = false) {
     const id = status.value?.id;
     if (!id) {
       flatFiles.value = [];
       return;
     }
-    flatLoading.value = true;
+    if (!silent) {
+      flatLoading.value = true;
+    }
     try {
       const op = getBackendOperation(filterOperation.value);
       const res = await ArchiveDiffService.FlatFiles(id, searchQuery.value, op);
@@ -539,7 +627,9 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     } catch (err) {
       error.value = errorMessage(err);
     } finally {
-      flatLoading.value = false;
+      if (!silent) {
+        flatLoading.value = false;
+      }
     }
   }
 
@@ -656,7 +746,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
         if (activeNode.value && activeNode.value.path === path) {
           await openFileDirect(activeNode.value, true);
         }
-        await refreshCurrentView();
+        await refreshCurrentView(path);
         return true;
       }
       return false;
@@ -677,7 +767,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
       if (activeNode.value && activeNode.value.path === path) {
         await openFileDirect(activeNode.value, true);
       }
-      await refreshCurrentView();
+      await refreshCurrentView(path);
       return true;
     } finally {
       merging.value = false;

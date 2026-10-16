@@ -7,9 +7,14 @@ const mocks = vi.hoisted(() => ({
   FlatFiles: vi.fn(), archiveDiffDrafts: vi.fn(), events: new Map<string, () => void>(),
 }));
 vi.mock("../bindings/pvfine/services", () => ({ ArchiveDiffService: mocks }));
-vi.mock("../src/stores/editor", () => ({ useEditorStore: () => ({ archiveDiffDrafts: mocks.archiveDiffDrafts }) }));
+vi.mock("../src/stores/editor", () => ({
+  useEditorStore: () => ({
+    archiveDiffDrafts: mocks.archiveDiffDrafts,
+    refreshMergedFiles: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
 vi.mock("@wailsio/runtime", () => ({ Events: { On: (name: string, callback: () => void) => mocks.events.set(name, callback) } }));
-import { useArchiveDiffStore } from "../src/stores/archiveDiff";
+import { useArchiveDiffStore, preserveTreeExpansion, type DiffTreeNode } from "../src/stores/archiveDiff";
 const ready = { id: "1", state: "ready", currentPath: "current.pvf", otherPath: "other.pvf", processed: 10, total: 10, added: 2, modified: 1, deleted: 3, error: "" };
 const file: ArchiveDiffFile = { path: "a.equ", operation: "add", beforeHash: "", afterHash: "hash", beforeType: 0, afterType: 1, beforeSize: 0, afterSize: 10, beforeExists: false, afterExists: true, beforeText: "", afterText: "new", textAvailable: true, message: "" };
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
@@ -210,4 +215,112 @@ test("方案 B（物理侧锚定）：反向视角下 store.file 保持原始物
   // 仅供单栏差异和树形列表消费的 displayedFile 执行逻辑翻转
   expect(store.displayedFile?.beforeText).toBe("local_content");
   expect(store.displayedFile?.afterText).toBe("target_content");
+});
+
+test("openFileDirect 在静默模式下不置空 file 且不设置 fileLoading 为 true", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+
+  // 第一次正常打开文件（非静默）
+  await store.openFile({ path: "a.equ", name: "a.equ", isDir: false, operation: "add", count: 1 });
+  expect(store.file?.path).toBe("a.equ");
+  expect(store.fileLoading).toBe(false);
+
+  // 构造异步挂起模拟静默拉取过程
+  const pending = deferred<ArchiveDiffFile>();
+  mocks.FileDiff.mockReturnValueOnce(pending.promise);
+
+  const silentPromise = store.openFileDirect({ path: "a.equ", name: "a.equ", isDir: false, operation: "add", count: 1 }, true);
+  // 静默模式下：fileLoading 应保持 false，file 应继续保留原先的引用（不被置为 null 导致外部组件卸载闪烁）
+  expect(store.fileLoading).toBe(false);
+  expect(store.file).not.toBeNull();
+  expect(store.file?.path).toBe("a.equ");
+
+  pending.resolve({ ...file, afterText: "updated_after_save" });
+  await silentPromise;
+  expect(store.file?.afterText).toBe("updated_after_save");
+  expect(store.fileLoading).toBe(false);
+});
+
+test("preserveTreeExpansion 能够将旧树已展开的 children 平滑嫁接给新树", () => {
+  const oldTree: DiffTreeNode[] = [
+    {
+      key: "equipment",
+      label: "equipment",
+      isLeaf: false,
+      node: { path: "equipment", name: "equipment", isDir: true, count: 2, operation: "" },
+      children: [
+        {
+          key: "equipment/weapon",
+          label: "weapon",
+          isLeaf: false,
+          node: { path: "equipment/weapon", name: "weapon", isDir: true, count: 1, operation: "" },
+          children: [
+            {
+              key: "equipment/weapon/sword.equ",
+              label: "sword.equ",
+              isLeaf: true,
+              node: { path: "equipment/weapon/sword.equ", name: "sword.equ", isDir: false, count: 1, operation: "add" },
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  // 新拉取的树只有 1 级节点（未展开，children 为 undefined）
+  const newTree: DiffTreeNode[] = [
+    {
+      key: "equipment",
+      label: "equipment",
+      isLeaf: false,
+      node: { path: "equipment", name: "equipment", isDir: true, count: 2, operation: "" },
+    },
+  ];
+
+  preserveTreeExpansion(newTree, oldTree);
+
+  // 断言：newTree 的 equipment 节点成功保留了已展开的 children
+  expect(newTree[0].children).toBeDefined();
+  expect(newTree[0].children?.length).toBe(1);
+  expect(newTree[0].children?.[0].key).toBe("equipment/weapon");
+  expect(newTree[0].children?.[0].children?.length).toBe(1);
+});
+
+test("refreshTreeForSavedFile 针对已展开的父目录进行局部刷新，不破坏整树状态", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+
+  // 展开 equipment 目录
+  const equipmentNode = store.tree[0]!;
+  mocks.FilteredChildren.mockResolvedValueOnce([
+    { path: "equipment/a.equ", name: "a.equ", isDir: false, operation: "add", count: 1 },
+  ]);
+  await store.loadChildren(equipmentNode);
+  expect(equipmentNode.children?.length).toBe(1);
+
+  // 模拟保存 equipment/a.equ 后的局部刷新
+  mocks.FilteredChildren.mockImplementation(async (_id: string, parent: string) => {
+    if (parent === "equipment") {
+      // 局部刷新 equipment 目录下仅返回最新数据
+      return [{ path: "equipment/a.equ", name: "a.equ", isDir: false, operation: "modify", count: 1 }];
+    }
+    if (parent === "") {
+      // 根节点最新计数值
+      return [{ path: "equipment", name: "equipment", isDir: true, count: 1, operation: "" }];
+    }
+    return [];
+  });
+
+  await store.refreshCurrentView("equipment/a.equ");
+
+  // 断言：equipment 节点的 children 得到局部精准更新，且整树结构未被坍塌
+  expect(store.tree.length).toBe(1);
+  expect(store.tree[0].node.path).toBe("equipment");
+  expect(store.tree[0].children?.length).toBe(1);
+  expect(store.tree[0].children?.[0].node.operation).toBe("modify");
 });

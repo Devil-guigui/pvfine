@@ -303,6 +303,23 @@ function adjustCursorAfterHistoryAction(
   }
 }
 
+function scheduleViewportRestore(
+  snapshot: ViewportScrollSnapshot,
+  onDone?: () => void
+): void {
+  cancelRestoreRaf();
+  restoreRaf1 = requestAnimationFrame(() => {
+    restoreRaf1 = null;
+    restoreViewportScroll(snapshot);
+    restoreRaf2 = requestAnimationFrame(() => {
+      restoreRaf2 = null;
+      restoreViewportScroll(snapshot);
+      suppressScrollIntoView = false;
+      onDone?.();
+    });
+  });
+}
+
 function executeHistoryAction(action: "undo" | "redo"): boolean {
   if (!mergeViewInstance?.a) return false;
   const viewA = mergeViewInstance.a;
@@ -329,16 +346,7 @@ function executeHistoryAction(action: "undo" | "redo"): boolean {
 
   // MergeView 的 scheduleMeasure 会在 requestAnimationFrame 重排 spacer 占位块，
   // 此处在连续两帧内重新校准滚动条位置，彻底杜绝回退后的视口跳变
-  cancelRestoreRaf();
-  restoreRaf1 = requestAnimationFrame(() => {
-    restoreRaf1 = null;
-    restoreViewportScroll(snapshot);
-    restoreRaf2 = requestAnimationFrame(() => {
-      restoreRaf2 = null;
-      restoreViewportScroll(snapshot);
-      suppressScrollIntoView = false;
-    });
-  });
+  scheduleViewportRestore(snapshot);
 
   return true;
 }
@@ -531,7 +539,7 @@ function initMergeView(preserveState = false): void {
   }
 
   currentInitializedPath = props.file.path;
-  const baseDoc = normalizeText(diffStore.draftText || localText.value || "");
+  const baseDoc = normalizeText(diffStore.draftText ?? localText.value ?? "");
   const targetDoc = normalizeText(otherText.value || "");
   const commonExtensions = buildCommonEditorExtensions();
 
@@ -573,16 +581,7 @@ function initMergeView(preserveState = false): void {
     suppressScrollIntoView = true;
     restoreViewportScroll(savedSnapshot);
 
-    cancelRestoreRaf();
-    restoreRaf1 = requestAnimationFrame(() => {
-      restoreRaf1 = null;
-      if (savedSnapshot) restoreViewportScroll(savedSnapshot);
-      restoreRaf2 = requestAnimationFrame(() => {
-        restoreRaf2 = null;
-        if (savedSnapshot) restoreViewportScroll(savedSnapshot);
-        suppressScrollIntoView = false;
-      });
-    });
+    scheduleViewportRestore(savedSnapshot);
   }
 
   void nextTick(() => {
@@ -720,8 +719,8 @@ watch(
       // 检查当前双栏编辑器中文档是否已经与目标数据完全一致
       const curDocA = normalizeText(mergeViewInstance.a.state.doc.toString());
       const curDocB = normalizeText(mergeViewInstance.b.state.doc.toString());
-      const targetDocA = normalizeText(diffStore.draftText || localText.value || "");
-      const targetDocB = normalizeText(otherText.value || "");
+      const targetDocA = normalizeText(diffStore.draftText ?? localText.value ?? "");
+      const targetDocB = normalizeText(otherText.value ?? "");
 
       if (curDocA === targetDocA && curDocB === targetDocB) {
         // 文档内容完全无变动（如合入后点击保存，编辑器文本即为保存后文本）：
