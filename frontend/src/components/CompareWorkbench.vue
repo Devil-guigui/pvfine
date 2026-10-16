@@ -174,10 +174,12 @@ async function handleMergeSelected() {
 
 // 树节点渲染：文件与目录均支持勾选（O(1) 集合判断），目录仅用于展开/折叠，绝不高亮选中
 function renderLabel({ option }: { option: TreeOption }) {
-  const node = (option as DiffTreeNode).node;
+  const treeNode = option as DiffTreeNode;
+  const node = treeNode.node;
   const op = diffOperation(node.operation, diff.reverse);
-  const checked = node.isDir ? diff.isDirSelected(node.path, node.count) : diff.isSelected(node.path);
-  const indeterminate = node.isDir ? diff.isDirIndeterminate(node.path, node.count) : false;
+  const dirState = node.isDir ? diff.getDirSelectionState(node.path, node.count, treeNode) : null;
+  const checked = dirState ? dirState.checked : diff.isSelected(node.path);
+  const indeterminate = dirState ? dirState.indeterminate : false;
 
   const checkboxVNode = h(NCheckbox, {
     checked,
@@ -187,7 +189,7 @@ function renderLabel({ option }: { option: TreeOption }) {
     onClick: (e: MouseEvent) => e.stopPropagation(),
     "onUpdate:checked": () => {
       if (node.isDir) {
-        void diff.toggleSelectDir(node.path, node.count);
+        void diff.toggleSelectDir(node.path, node.count, treeNode);
       } else {
         diff.toggleSelect(node.path);
       }

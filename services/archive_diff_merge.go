@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -236,6 +237,11 @@ func (s *ArchiveDiffService) finalizeMergeMutationLocked(
 	}
 }
 
+// diffPathBase 提取路径的纯文件名，兼容 Windows 与正斜杠路径
+func diffPathBase(p string) string {
+	return path.Base(strings.ReplaceAll(p, "\\", "/"))
+}
+
 // FlatFiles 按照搜索词与操作类型返回所有差异文件的平铺列表，供双栏工作台过滤检索
 func (s *ArchiveDiffService) FlatFiles(id, query, operation string) ([]ArchiveDiffNode, error) {
 	s.mu.Lock()
@@ -261,7 +267,7 @@ func (s *ArchiveDiffService) FlatFiles(id, query, operation string) ([]ArchiveDi
 		}
 		result = append(result, ArchiveDiffNode{
 			Path:      display,
-			Name:      filepath.Base(display),
+			Name:      diffPathBase(display),
 			IsDir:     false,
 			Operation: op,
 			Count:     1,

@@ -125,3 +125,35 @@ test("归档重载后若已配置目标则自动刷新对比，未配置时保�
   expect(store.otherPath).toBe("new_target.pvf");
   expect(mocks.Start).toHaveBeenCalledTimes(3);
 });
+
+test("根据关键字过滤后勾选目录仅选择匹配文件，绝不包含被隐藏的文件", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+
+  // 模拟搜索 sword：后端仅返回匹配项，被关键字隐藏的 axe.equ 不应被选中
+  mocks.FlatFiles.mockResolvedValue([
+    { path: "equipment/weapon/sword.equ", name: "sword.equ", isDir: false, operation: "modify", count: 1 },
+  ]);
+
+  store.searchQuery = "sword";
+  await store.searchTree("sword");
+
+  // 确认搜索树已构建
+  expect(store.displayedTree.length).toBe(1);
+  expect(store.displayedTree[0].node.path).toBe("equipment");
+
+  // 勾选顶层 equipment 目录
+  await store.toggleSelectDir("equipment");
+
+  // 断言：只有匹配的 sword.equ 被选中，绝不包含被隐藏的文件
+  expect(store.selectedPaths).toEqual(new Set(["equipment/weapon/sword.equ"]));
+  expect(store.isDirSelected("equipment", 1)).toBe(true);
+  expect(store.isDirSelected("equipment/weapon", 1)).toBe(true);
+
+  // 再次勾选目录执行反选，完全清空已选项
+  await store.toggleSelectDir("equipment");
+  expect(store.selectedPaths.size).toBe(0);
+  expect(store.isDirSelected("equipment", 1)).toBe(false);
+});

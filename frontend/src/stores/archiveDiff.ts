@@ -19,6 +19,46 @@ function treeNodes(nodes: ArchiveDiffNode[]): DiffTreeNode[] {
   }));
 }
 
+/**
+ * 递归收集节点（包括目录及其所有子孙目录）下所有的叶子文件路径
+ * @author flobit
+ */
+export function collectLeafPaths(node: DiffTreeNode): string[] {
+  const leaves: string[] = [];
+  function dfs(curr: DiffTreeNode) {
+    if (!curr.node.isDir) {
+      if (curr.node.path) {
+        leaves.push(curr.node.path);
+      }
+      return;
+    }
+    if (curr.children && curr.children.length > 0) {
+      for (const child of curr.children) {
+        dfs(child as DiffTreeNode);
+      }
+    }
+  }
+  dfs(node);
+  return leaves;
+}
+
+/**
+ * 根据路径深度优先查找目录或文件节点
+ * @author flobit
+ */
+export function findNodeByPath(nodes: DiffTreeNode[], targetPath: string): DiffTreeNode | null {
+  const target = targetPath.toLowerCase().replace(/\/+$/, "");
+  for (const node of nodes) {
+    const current = (node.node?.path || "").toLowerCase().replace(/\/+$/, "");
+    if (current === target) return node;
+    if (node.children && node.children.length > 0) {
+      const found = findNodeByPath(node.children as DiffTreeNode[], targetPath);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   const visible = ref(false);
   const otherPath = ref("");
@@ -112,16 +152,43 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     return selectedPaths.value.has(path.toLowerCase());
   }
 
-  function isDirSelected(path: string, count: number): boolean {
-    if (count <= 0) return false;
-    const c = dirSelectedCount.value.get(path.toLowerCase()) ?? 0;
-    return c >= count;
+  function getDirLeafPaths(path: string, targetNode?: DiffTreeNode): string[] {
+    if (!searchQuery.value.trim()) return [];
+    const node = targetNode ?? findNodeByPath(searchedTreeNodes.value, path);
+    if (node && node.node.isDir && node.children && node.children.length > 0) {
+      return collectLeafPaths(node);
+    }
+    return [];
   }
 
-  function isDirIndeterminate(path: string, count: number): boolean {
-    if (count <= 0) return false;
+  function getDirSelectionState(path: string, count: number, targetNode?: DiffTreeNode): { checked: boolean; indeterminate: boolean } {
+    if (count <= 0) return { checked: false, indeterminate: false };
+    const leaves = getDirLeafPaths(path, targetNode);
+    if (leaves.length > 0) {
+      let selected = 0;
+      for (const p of leaves) {
+        if (selectedPaths.value.has(p.toLowerCase())) {
+          selected++;
+        }
+      }
+      return {
+        checked: selected === leaves.length,
+        indeterminate: selected > 0 && selected < leaves.length,
+      };
+    }
     const c = dirSelectedCount.value.get(path.toLowerCase()) ?? 0;
-    return c > 0 && c < count;
+    return {
+      checked: c >= count,
+      indeterminate: c > 0 && c < count,
+    };
+  }
+
+  function isDirSelected(path: string, count: number, targetNode?: DiffTreeNode): boolean {
+    return getDirSelectionState(path, count, targetNode).checked;
+  }
+
+  function isDirIndeterminate(path: string, count: number, targetNode?: DiffTreeNode): boolean {
+    return getDirSelectionState(path, count, targetNode).indeterminate;
   }
 
   function toggleSelect(path: string) {
@@ -135,19 +202,35 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     selectedPaths.value = next;
   }
 
-  async function getMatchingFilesUnderDir(dirPath: string): Promise<string[]> {
+  async function getMatchingFilesUnderDir(dirPath: string, targetNode?: DiffTreeNode): Promise<string[]> {
+    const q = searchQuery.value.trim().toLowerCase();
+    // 1. 若处于关键字搜索过滤状态，优先从当前展示的过滤树节点收集所有可见叶子文件，避免异步竞态与隐藏文件泄漏
+    if (q) {
+      const leaves = getDirLeafPaths(dirPath, targetNode);
+      if (leaves.length > 0) {
+        return leaves;
+      }
+    }
+
+    // 2. 否则通过后端接口拉取匹配文件，并在前端对关键字与目录路径进行双重过滤防线
     const id = status.value?.id;
     if (!id) return [];
     const op = getBackendOperation(filterOperation.value);
     const res = await ArchiveDiffService.FlatFiles(id, searchQuery.value, op);
     const normalizedDir = dirPath ? dirPath.toLowerCase().replace(/\/+$/, "") + "/" : "";
     return (res ?? [])
-      .filter((f) => !f.isDir && (!normalizedDir || f.path.toLowerCase().startsWith(normalizedDir)))
+      .filter((f) => {
+        if (f.isDir) return false;
+        const lowerPath = f.path.toLowerCase();
+        if (normalizedDir && !lowerPath.startsWith(normalizedDir)) return false;
+        if (q && !lowerPath.includes(q)) return false;
+        return true;
+      })
       .map((f) => f.path);
   }
 
-  async function toggleSelectDir(path: string, _totalCount?: number) {
-    const matching = await getMatchingFilesUnderDir(path);
+  async function toggleSelectDir(path: string, _totalCount?: number, targetNode?: DiffTreeNode) {
+    const matching = await getMatchingFilesUnderDir(path, targetNode);
     if (matching.length === 0) return;
     const next = new Set(selectedPaths.value);
     const allSelected = matching.every((p) => next.has(p.toLowerCase()));
@@ -633,8 +716,8 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     selectedPaths, merging, draftPath, draftText, originalDraftText, isDraftDirty,
     showDraftConfirmModal, pendingSwitchNode, pendingCloseTab,
     open, close, selectArchive, refresh, loadRootTree, loadChildren, openFile, openFileDirect, cancel,
-    toggleSelect, selectAll, deselectAll, clearSelection, isSelected, isDirSelected, isDirIndeterminate,
-    toggleSelectDir, searchTree, clearSearch, collapseAll, setFilterOperation, toggleReverse,
+    toggleSelect, selectAll, deselectAll, clearSelection, isSelected, isDirSelected, isDirIndeterminate, getDirSelectionState,
+    toggleSelectDir, getMatchingFilesUnderDir, searchTree, clearSearch, collapseAll, setFilterOperation, toggleReverse,
     loadFlatFiles, refreshCurrentView, mergeSelected, mergeSingleFile, mergeText,
     setDraft, updateDraftText, discardDraft,
     confirmDraftSaveAndSwitch, confirmDraftDiscardAndSwitch, cancelDraftSwitch,

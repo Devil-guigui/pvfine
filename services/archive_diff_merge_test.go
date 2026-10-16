@@ -91,13 +91,27 @@ func TestArchiveDiffStringPoolDifferenceAndMerge(t *testing.T) {
 		t.Fatalf("Deleted count = %d, want 1", finalStatus.Deleted)
 	}
 
-	// 验证 FlatFiles
+	// 验证 FlatFiles 全量与关键字过滤
 	flatAll, err := diffService.FlatFiles(status.ID, "", "all")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(flatAll) != 2 {
 		t.Fatalf("FlatFiles count = %d, want 2", len(flatAll))
+	}
+	flatFilteredTest, err := diffService.FlatFiles(status.ID, "test", "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flatFilteredTest) != 1 || flatFilteredTest[0].Path != "etc/test.etc" || flatFilteredTest[0].Name != "test.etc" {
+		t.Fatalf("FlatFiles filtered by 'test' unexpected: %+v", flatFilteredTest)
+	}
+	flatNone, err := diffService.FlatFiles(status.ID, "nonexistent_query", "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flatNone) != 0 {
+		t.Fatalf("FlatFiles filtered by nonexistent should be empty, got: %+v", flatNone)
 	}
 
 	// 验证 FilteredChildren
