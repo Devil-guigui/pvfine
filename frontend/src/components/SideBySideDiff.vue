@@ -16,7 +16,8 @@ import {
   ArrowRedo20Regular,
   ArrowUndo20Regular,
   ArrowUp20Regular,
-  CheckmarkCircle20Regular,
+  ChevronLeft20Regular,
+  ChevronRight20Regular,
   Copy20Regular,
   DocumentArrowLeft20Regular,
   Open20Regular,
@@ -42,6 +43,7 @@ import { useArchiveDiffStore } from "../stores/archiveDiff";
 import { useEditorStore } from "../stores/editor";
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
 import { registerUndoHandler } from "../activeUndoBridge";
+import { isExternalInputElement } from "../archiveDiff";
 
 const props = defineProps<{
   file: ArchiveDiffFile;
@@ -644,37 +646,91 @@ function scrollToChunk(index: number): void {
   const chunk = mergeViewInstance.chunks[clamped];
   if (!chunk) return;
 
-  const scroller = mergeViewInstance.dom;
-  const clientHeight = scroller.clientHeight || 500;
-  const lineA = mergeViewInstance.a.state.doc.lineAt(
-    Math.min(chunk.fromA, mergeViewInstance.a.state.doc.length)
-  );
-  const totalLines = mergeViewInstance.a.state.doc.lines || 1;
-  const ratio = Math.max(0, Math.min(1, lineA.number / totalLines));
-  const estimatedScrollTop = Math.max(0, ratio * scroller.scrollHeight - clientHeight / 2);
-  scroller.scrollTo({ top: estimatedScrollTop, behavior: "smooth" });
+  const docLenA = mergeViewInstance.a.state.doc.length;
+  const targetPosA = Math.min(chunk.fromA, docLenA);
+
+  // 1. 设置左侧可编辑区光标选区，并利用 EditorView.scrollIntoView 将视野精准垂直居中
+  mergeViewInstance.a.dispatch({
+    selection: { anchor: targetPosA },
+    effects: EditorView.scrollIntoView(targetPosA, { y: "center" }),
+  });
+
+  // 2. 聚焦至左侧编辑器，激活光标闪烁
+  mergeViewInstance.a.focus();
+
+  // 3. 右侧对比目标只读区同步垂直居中定位至对应差异位置
+  const docLenB = mergeViewInstance.b.state.doc.length;
+  const targetPosB = Math.min(chunk.fromB, docLenB);
+  mergeViewInstance.b.dispatch({
+    effects: EditorView.scrollIntoView(targetPosB, { y: "center" }),
+  });
+}
+
+function nextDifference(): void {
+  if (!mergeViewInstance || mergeViewInstance.chunks.length === 0) return;
+  const total = mergeViewInstance.chunks.length;
+  if (total <= 1) {
+    scrollToChunk(0);
+    return;
+  }
+  // 严格在当前文件内部切换至下一个差异段落，绝对不跨文件
+  const nextIdx = (activeChunkIndex.value + 1) % total;
+  scrollToChunk(nextIdx);
+}
+
+function previousDifference(): void {
+  if (!mergeViewInstance || mergeViewInstance.chunks.length === 0) return;
+  const total = mergeViewInstance.chunks.length;
+  if (total <= 1) {
+    scrollToChunk(0);
+    return;
+  }
+  // 严格在当前文件内部切换至上一个差异段落，绝对不跨文件
+  const prevIdx = (activeChunkIndex.value - 1 + total) % total;
+  scrollToChunk(prevIdx);
 }
 
 function handleGlobalKeydown(e: KeyboardEvent): void {
   if (!mergeViewInstance) return;
 
   const isMod = e.ctrlKey || e.metaKey;
-  if (!isMod) return;
-
+  const isAlt = e.altKey;
   const code = e.code;
   const key = e.key ? e.key.toLowerCase() : "";
 
-  // 避免在外部输入框（如搜索框）打字时误触发快捷键
-  const activeEl = document.activeElement as HTMLElement | null;
-  const isOtherInput = !!(
-    activeEl &&
-    (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.isContentEditable) &&
-    !mergeViewInstance.dom.contains(activeEl)
-  );
-  if (isOtherInput) return;
+  // 避免在外部独立输入框（如顶栏搜索框）打字时误触发快捷键；而在文本编辑器内完全支持
+  if (isExternalInputElement(document.activeElement, mergeViewInstance.dom)) return;
 
-  // 1. Ctrl+S 保存
-  if (code === "KeyS" || key === "s") {
+  // 0. 差异段落导航：Alt + Up / Alt + Down（仅限当前文件内部，文件间切换由 CompareWorkbench 统一处理）
+  if (isAlt && !isMod) {
+    if (code === "ArrowUp") {
+      e.preventDefault();
+      e.stopPropagation();
+      previousDifference();
+      return;
+    }
+    if (code === "ArrowDown") {
+      e.preventDefault();
+      e.stopPropagation();
+      nextDifference();
+      return;
+    }
+  }
+
+  // 1. IDEA 差异段落导航：F7（下一个差异） / Shift + F7（上一个差异）
+  if (code === "F7") {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey) {
+      previousDifference();
+    } else {
+      nextDifference();
+    }
+    return;
+  }
+
+  // 2. Ctrl+S 保存
+  if (isMod && (code === "KeyS" || key === "s")) {
     e.preventDefault();
     e.stopPropagation();
     if (diffStore.isDraftDirty) {
@@ -683,8 +739,8 @@ function handleGlobalKeydown(e: KeyboardEvent): void {
     return;
   }
 
-  // 2. Ctrl+Z 撤销 (或 Ctrl+Shift+Z 重做)
-  if (code === "KeyZ" || key === "z") {
+  // 3. Ctrl+Z 撤销 (或 Ctrl+Shift+Z 重做)
+  if (isMod && (code === "KeyZ" || key === "z")) {
     e.preventDefault();
     e.stopPropagation();
     if (e.shiftKey) {
@@ -695,8 +751,8 @@ function handleGlobalKeydown(e: KeyboardEvent): void {
     return;
   }
 
-  // 3. Ctrl+Y 重做
-  if ((code === "KeyY" || key === "y") && !e.shiftKey) {
+  // 4. Ctrl+Y 重做
+  if (isMod && (code === "KeyY" || key === "y") && !e.shiftKey) {
     e.preventDefault();
     e.stopPropagation();
     performRedo();
@@ -748,13 +804,7 @@ onMounted(() => {
     priority: 100,
     isActive: () => {
       if (!mergeViewInstance) return false;
-      const activeEl = document.activeElement as HTMLElement | null;
-      const isOtherInput = !!(
-        activeEl &&
-        (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.isContentEditable) &&
-        !mergeViewInstance.dom.contains(activeEl)
-      );
-      return !isOtherInput;
+      return !isExternalInputElement(document.activeElement, mergeViewInstance.dom);
     },
   });
   window.addEventListener("keydown", handleGlobalKeydown, true);
@@ -867,14 +917,51 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="toolbar-center">
+        <!-- 文件级导航：查看上一个差异文件 / 查看下一个差异文件 -->
+        <div class="file-navigation-group">
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <button
+                class="nav-arrow-btn"
+                :disabled="!diffStore.hasPreviousFile"
+                aria-label="查看上一个差异文件 (Alt+Left)"
+                @click="diffStore.openPreviousFile()"
+              >
+                <NIcon size="13"><ChevronLeft20Regular /></NIcon>
+              </button>
+            </template>
+            查看上一个差异文件 (Alt+Left){{ diffStore.fileNavIndicator ? ` [${diffStore.fileNavIndicator}]` : '' }}
+          </NTooltip>
+
+          <span class="file-indicator" :title="`差异文件列表位置: ${diffStore.fileNavIndicator}`">
+            {{ diffStore.fileNavIndicator || "文件" }}
+          </span>
+
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <button
+                class="nav-arrow-btn"
+                :disabled="!diffStore.hasNextFile"
+                aria-label="查看下一个差异文件 (Alt+Right)"
+                @click="diffStore.openNextFile()"
+              >
+                <NIcon size="13"><ChevronRight20Regular /></NIcon>
+              </button>
+            </template>
+            查看下一个差异文件 (Alt+Right){{ diffStore.fileNavIndicator ? ` [${diffStore.fileNavIndicator}]` : '' }}
+          </NTooltip>
+        </div>
+
+        <div class="toolbar-divider" />
+
         <div v-if="chunksCount > 0" class="chunk-navigation-group">
           <NTooltip trigger="hover">
             <template #trigger>
-              <button class="nav-arrow-btn" aria-label="上一个差异" @click="scrollToChunk(activeChunkIndex - 1)">
+              <button class="nav-arrow-btn" aria-label="上一个差异 (Shift+F7 / Alt+Up)" @click="previousDifference">
                 <NIcon size="13"><ArrowUp20Regular /></NIcon>
               </button>
             </template>
-            上一个差异
+            上一个差异 (Shift+F7 / Alt+Up)
           </NTooltip>
 
           <NTooltip trigger="hover">
@@ -886,11 +973,11 @@ onBeforeUnmount(() => {
 
           <NTooltip trigger="hover">
             <template #trigger>
-              <button class="nav-arrow-btn" aria-label="下一个差异" @click="scrollToChunk(activeChunkIndex + 1)">
+              <button class="nav-arrow-btn" aria-label="下一个差异 (F7 / Alt+Down)" @click="nextDifference">
                 <NIcon size="13"><ArrowDown20Regular /></NIcon>
               </button>
             </template>
-            下一个差异
+            下一个差异 (F7 / Alt+Down)
           </NTooltip>
         </div>
         <div v-else class="no-diff-badge" title="两份归档中该文件内容完全一致">
@@ -1173,6 +1260,32 @@ onBeforeUnmount(() => {
   .file-size-badge {
     display: none;
   }
+}
+
+.file-navigation-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--pvf-surface-card);
+  border: 1px solid var(--pvf-border-subtle);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.file-indicator {
+  font-size: 11px;
+  color: var(--pvf-text-secondary);
+  padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--pvf-border-subtle);
+  margin: 0 2px;
+  flex-shrink: 0;
 }
 
 .chunk-navigation-group {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"pvfine/internal/pvf"
@@ -273,6 +274,13 @@ func (s *ArchiveDiffService) FlatFiles(id, query, operation string) ([]ArchiveDi
 			Count:     1,
 		})
 	}
+	sort.Slice(result, func(i, j int) bool {
+		pi, pj := strings.ToLower(result[i].Path), strings.ToLower(result[j].Path)
+		if pi != pj {
+			return pi < pj
+		}
+		return result[i].Path < result[j].Path
+	})
 
 	return result, nil
 }

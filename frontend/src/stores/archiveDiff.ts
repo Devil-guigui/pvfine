@@ -5,7 +5,7 @@ import type { TreeOption } from "naive-ui";
 import { ArchiveDiffService } from "../../bindings/pvfine/services";
 import type { ArchiveDiffStatus, ArchiveDiffFile, ArchiveDiffNode } from "../../bindings/pvfine/services/models";
 import { useEditorStore } from "./editor";
-import { orientArchiveDiff } from "../archiveDiff";
+import { diffOperation, orientArchiveDiff } from "../archiveDiff";
 
 export type DiffTreeNode = TreeOption & { node: ArchiveDiffNode; children?: DiffTreeNode[] };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -71,6 +71,29 @@ export function preserveTreeExpansion(newNodes: DiffTreeNode[], oldNodes: DiffTr
       newNode.children = oldNode.children;
     }
   }
+}
+
+/**
+ * 递归收集树节点列表中所有符合条件的叶子文件节点，按树的自然深度优先序排列
+ * @author flobit
+ */
+export function collectLeavesFromTree(roots: DiffTreeNode[], op = "all", reverse = false, query = ""): ArchiveDiffNode[] {
+  const leaves: ArchiveDiffNode[] = [];
+  const q = query.trim().toLowerCase();
+  function walk(curr: DiffTreeNode) {
+    if (!curr.node.isDir) {
+      const currentOp = diffOperation(curr.node.operation, reverse);
+      if (op !== "all" && op && currentOp !== op) return;
+      if (q && !curr.node.path.toLowerCase().includes(q)) return;
+      leaves.push(curr.node);
+      return;
+    }
+    if (curr.children && curr.children.length > 0) {
+      for (const c of curr.children) walk(c as DiffTreeNode);
+    }
+  }
+  for (const r of roots) walk(r);
+  return leaves;
 }
 
 export const useArchiveDiffStore = defineStore("archiveDiff", () => {
@@ -498,6 +521,8 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
           void loadFlatFiles();
         } else if (searchQuery.value.trim()) {
           void searchTree(searchQuery.value);
+        } else {
+          void loadFlatFiles(true);
         }
       } else if (result.state === "error") {
         error.value = result.error;
@@ -591,10 +616,13 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
       await loadFlatFiles(true);
     } else if (searchQuery.value.trim()) {
       await searchTree(searchQuery.value, true);
+      void loadFlatFiles(true);
     } else if (savedPath) {
       await refreshTreeForSavedFile(savedPath);
+      void loadFlatFiles(true);
     } else {
       await refreshTreePreservingExpansion();
+      void loadFlatFiles(true);
     }
   }
 
@@ -621,8 +649,8 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
       flatLoading.value = true;
     }
     try {
-      const op = getBackendOperation(filterOperation.value);
-      const res = await ArchiveDiffService.FlatFiles(id, searchQuery.value, op);
+      // 保持拉取全量差异文件底表，前端响应式过滤检索，跨树形与平铺模式状态绝对同步
+      const res = await ArchiveDiffService.FlatFiles(id, "", "");
       flatFiles.value = res ?? [];
     } catch (err) {
       error.value = errorMessage(err);
@@ -643,6 +671,99 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     selectedKeys.value = [node.path.toLowerCase()];
     await openFileDirect(node);
     return true;
+  }
+
+  /**
+   * 当前过滤与搜索条件下所有有序的差异文件列表
+   * 无论在树形模式还是平铺模式下均保持全局一致的路径排序
+   * @author flobit
+   */
+  const navigableFiles = computed<ArchiveDiffNode[]>(() => {
+    const q = searchQuery.value.trim().toLowerCase();
+    const op = filterOperation.value;
+
+    // 1. 若平铺全量底表已有数据，直接按操作过滤和搜索词过滤
+    if (flatFiles.value.length > 0) {
+      return flatFiles.value.filter((node) => {
+        if (node.isDir) return false;
+        const currentOp = diffOperation(node.operation, reverse.value);
+        if (op !== "all" && op && currentOp !== op) return false;
+        if (q && !node.path.toLowerCase().includes(q)) return false;
+        return true;
+      });
+    }
+
+    // 2. 否则若处于搜索树模式，从 searchedTreeNodes 收集所有匹配叶子节点
+    if (q && searchedTreeNodes.value.length > 0) {
+      return collectLeavesFromTree(searchedTreeNodes.value, op, reverse.value, q);
+    }
+
+    // 3. 兜底：若平铺尚未拉取，从当前 tree 收集已知叶子
+    return collectLeavesFromTree(tree.value, op, reverse.value, q);
+  });
+
+  const currentFileIndex = computed(() => {
+    const currentPath = (file.value?.path || activeNode.value?.path || "").toLowerCase();
+    if (!currentPath || navigableFiles.value.length === 0) return -1;
+    return navigableFiles.value.findIndex(
+      (node) => node.path.toLowerCase() === currentPath
+    );
+  });
+
+  const hasPreviousFile = computed(() => currentFileIndex.value > 0);
+  const hasNextFile = computed(() => {
+    const total = navigableFiles.value.length;
+    if (total === 0) return false;
+    const idx = currentFileIndex.value;
+    return idx < total - 1;
+  });
+
+  const fileNavIndicator = computed(() => {
+    const total = navigableFiles.value.length;
+    if (total === 0) return "";
+    const current = currentFileIndex.value;
+    if (current < 0) return `0 / ${total}`;
+    return `${current + 1} / ${total}`;
+  });
+
+  /**
+   * 导航到指定差异文件，并在确认切换成功后自动展开该文件所在的祖先目录
+   * @author flobit
+   */
+  async function navigateToDiffFile(targetNode: ArchiveDiffNode): Promise<boolean> {
+    // 1. 先尝试切换文件（若存在脏草稿会被拦截弹出弹窗，返回 false）
+    const success = await openFile(targetNode);
+    if (!success) return false;
+
+    // 2. 确认切换成功后，再展开其祖先目录，确保用户取消弹窗时零副作用
+    const normalized = targetNode.path.replaceAll("\\", "/").replace(/^\/+/, "");
+    const parts = normalized.split("/");
+    if (parts.length > 1) {
+      let currentDir = "";
+      const nextExpanded = new Set(expandedKeys.value.map(String));
+      for (let i = 0; i < parts.length - 1; i++) {
+        currentDir = currentDir ? `${currentDir}/${parts[i]}` : parts[i];
+        nextExpanded.add(currentDir.toLowerCase());
+      }
+      expandedKeys.value = Array.from(nextExpanded);
+    }
+
+    return true;
+  }
+
+  async function openPreviousFile(): Promise<boolean> {
+    if (!hasPreviousFile.value) return false;
+    const target = navigableFiles.value[currentFileIndex.value - 1];
+    if (!target) return false;
+    return await navigateToDiffFile(target);
+  }
+
+  async function openNextFile(): Promise<boolean> {
+    if (!hasNextFile.value) return false;
+    const nextIdx = currentFileIndex.value < 0 ? 0 : currentFileIndex.value + 1;
+    const target = navigableFiles.value[nextIdx];
+    if (!target) return false;
+    return await navigateToDiffFile(target);
   }
 
   async function openFileDirect(node: ArchiveDiffNode, silent = false) {
@@ -815,6 +936,8 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     toggleSelectDir, getMatchingFilesUnderDir, searchTree, clearSearch, collapseAll, setFilterOperation, toggleReverse,
     loadFlatFiles, refreshCurrentView, mergeSelected, mergeSingleFile, mergeText,
     setDraft, updateDraftText, discardDraft,
+    navigableFiles, currentFileIndex, hasPreviousFile, hasNextFile, fileNavIndicator,
+    openPreviousFile, openNextFile,
     confirmDraftSaveAndSwitch, confirmDraftDiscardAndSwitch, cancelDraftSwitch,
   };
 });

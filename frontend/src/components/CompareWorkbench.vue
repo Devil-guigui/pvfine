@@ -11,12 +11,14 @@
  *
  * @author flobit
  */
-import { computed, h, onMounted, ref, watch, type VNode } from "vue";
+import { computed, h, onBeforeUnmount, onMounted, ref, watch, type VNode } from "vue";
 import {
   ArrowClockwise20Regular,
   ArrowCollapseAll20Regular,
   ArrowDownload20Regular,
   ChevronDown20Regular,
+  ChevronLeft20Regular,
+  ChevronRight20Regular,
   ChevronUp20Regular,
   Document20Regular,
   DocumentArrowLeft20Regular,
@@ -47,7 +49,7 @@ import { useArchiveDiffStore, type DiffTreeNode } from "../stores/archiveDiff";
 import { useArchiveStore } from "../stores/archive";
 import { useSettingsStore } from "../stores/settings";
 import { useExportStore } from "../stores/export";
-import { archiveName, diffOperation } from "../archiveDiff";
+import { archiveName, diffOperation, isExternalInputElement } from "../archiveDiff";
 import { computeDiffLines } from "../textDiff";
 import type { ResolvedThemeId } from "../theme";
 import UnifiedDiff from "./UnifiedDiff.vue";
@@ -63,8 +65,37 @@ const settings = useSettingsStore();
 const exporter = useExportStore();
 const message = useMessage();
 
+function handleWorkbenchKeydown(e: KeyboardEvent): void {
+  const isAlt = e.altKey;
+  const isMod = e.ctrlKey || e.metaKey;
+  if (!isAlt || isMod) return;
+
+  // 仅当用户在外部独立输入框（如顶栏搜索框）打字时跳过；在文本编辑器内完全支持快捷键
+  if (isExternalInputElement(document.activeElement)) return;
+
+  const code = e.code;
+  // IDEA 规范：Alt + Left / Alt + Right 专用于差异文件之间的线性切换
+  if (code === "ArrowLeft") {
+    e.preventDefault();
+    e.stopPropagation();
+    void diff.openPreviousFile();
+    return;
+  }
+  if (code === "ArrowRight") {
+    e.preventDefault();
+    e.stopPropagation();
+    void diff.openNextFile();
+    return;
+  }
+}
+
 onMounted(() => {
   diff.open();
+  window.addEventListener("keydown", handleWorkbenchKeydown, true);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleWorkbenchKeydown, true);
 });
 
 const handledClickEvents = new WeakSet<MouseEvent>();
@@ -282,17 +313,8 @@ function handleSelectedKeysUpdate(_keys: Array<string | number>, options: Array<
     .map((opt) => opt.key as string | number);
 }
 
-// 平铺列表过滤计算
-const filteredFlatFiles = computed(() => {
-  const query = diff.searchQuery.trim().toLowerCase();
-  const op = diff.filterOperation;
-  return diff.flatFiles.filter((node) => {
-    if (node.isDir) return false;
-    if (op !== "all" && diffOperation(node.operation, diff.reverse) !== op) return false;
-    if (query && !node.path.toLowerCase().includes(query)) return false;
-    return true;
-  });
-});
+// 平铺列表展示与选中的差异文件集合直接复用 store 维护的有序可导航列表，消除重复过滤逻辑
+const filteredFlatFiles = computed(() => diff.navigableFiles);
 
 const isAllFlatSelected = computed(() => {
   if (filteredFlatFiles.value.length === 0) return false;
@@ -423,33 +445,6 @@ function switchToListMode(mode: "tree" | "flat") {
           取消
         </NButton>
 
-        <template v-if="diff.status?.state === 'ready' && diff.tree.length">
-          <NDropdown
-            v-if="diff.selectedPaths.size > 0"
-            trigger="click"
-            :options="exportDropdownOptions"
-            @select="handleExportDropdownSelect"
-          >
-            <NButton
-              size="small"
-              :disabled="diff.busy || exporter.visible"
-            >
-              <template #icon><NIcon><ArrowDownload20Regular /></NIcon></template>
-              导出差异 ({{ diff.selectedPaths.size }})
-              <NIcon size="12" style="margin-left: 2px"><ChevronDown20Regular /></NIcon>
-            </NButton>
-          </NDropdown>
-          <NButton
-            v-else
-            size="small"
-            :disabled="diff.busy || exporter.visible"
-            @click="exportAllDiff"
-          >
-            <template #icon><NIcon><ArrowDownload20Regular /></NIcon></template>
-            导出差异
-          </NButton>
-        </template>
-
         <!-- 折叠按钮 -->
         <NTooltip v-if="diff.status?.state === 'ready'" trigger="hover">
           <template #trigger>
@@ -554,18 +549,33 @@ function switchToListMode(mode: "tree" | "flat") {
         合入选中文件 ({{ diff.selectedPaths.size }})
       </NButton>
 
-      <!-- 批量导出按钮 -->
-      <NButton
-        v-if="diff.selectedPaths.size > 0"
-        size="small"
-        :disabled="diff.busy || exporter.visible"
-        @click="exportSelectedDiff"
-      >
-        <template #icon>
-          <NIcon><ArrowDownload20Regular /></NIcon>
-        </template>
-        导出选中差异 ({{ diff.selectedPaths.size }})
-      </NButton>
+      <!-- 统一导出差异控制（未勾选时导出全部，勾选后支持下拉选择导出选中/全部） -->
+      <template v-if="diff.status?.state === 'ready' && (diff.tree.length || diff.flatFiles.length)">
+        <NDropdown
+          v-if="diff.selectedPaths.size > 0"
+          trigger="click"
+          :options="exportDropdownOptions"
+          @select="handleExportDropdownSelect"
+        >
+          <NButton
+            size="small"
+            :disabled="diff.busy || exporter.visible"
+          >
+            <template #icon><NIcon><ArrowDownload20Regular /></NIcon></template>
+            导出差异 ({{ diff.selectedPaths.size }})
+            <NIcon size="12" style="margin-left: 2px"><ChevronDown20Regular /></NIcon>
+          </NButton>
+        </NDropdown>
+        <NButton
+          v-else
+          size="small"
+          :disabled="diff.busy || exporter.visible"
+          @click="exportAllDiff"
+        >
+          <template #icon><NIcon><ArrowDownload20Regular /></NIcon></template>
+          导出全部差异
+        </NButton>
+      </template>
 
       <!-- 视图模式切换 -->
       <div class="view-mode-toggle">
@@ -727,6 +737,43 @@ function switchToListMode(mode: "tree" | "flat") {
                 {{ operationLabels[parsedFile.operation] }}
               </span>
               <strong :title="parsedFile.path">{{ parsedFile.path }}</strong>
+
+              <!-- 单栏与非文本文件下的差异文件导航按钮 -->
+              <div class="file-navigation-actions">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      :disabled="!diff.hasPreviousFile"
+                      aria-label="查看上一个差异文件 (Alt+Left)"
+                      @click="diff.openPreviousFile()"
+                    >
+                      <template #icon>
+                        <NIcon :size="14"><ChevronLeft20Regular /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  查看上一个差异文件 (Alt+Left){{ diff.fileNavIndicator ? ` [${diff.fileNavIndicator}]` : '' }}
+                </NTooltip>
+                <span class="file-nav-indicator">{{ diff.fileNavIndicator }}</span>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      :disabled="!diff.hasNextFile"
+                      aria-label="查看下一个差异文件 (Alt+Right)"
+                      @click="diff.openNextFile()"
+                    >
+                      <template #icon>
+                        <NIcon :size="14"><ChevronRight20Regular /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  查看下一个差异文件 (Alt+Right){{ diff.fileNavIndicator ? ` [${diff.fileNavIndicator}]` : '' }}
+                </NTooltip>
+              </div>
             </div>
             <div class="file-metadata">
               <div>
@@ -1229,8 +1276,9 @@ function switchToListMode(mode: "tree" | "flat") {
 
 .file-heading {
   display: flex;
+  align-items: center;
   gap: 10px;
-  padding: 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--pvf-border-subtle);
 }
 
@@ -1239,6 +1287,23 @@ function switchToListMode(mode: "tree" | "flat") {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+}
+
+.file-navigation-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.file-nav-indicator {
+  font-size: 11px;
+  color: var(--pvf-text-secondary);
+  padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
 }
 
 .file-metadata {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createPinia, disposePinia, setActivePinia, type Pinia } from "pinia";
 import type { ArchiveDiffFile } from "../bindings/pvfine/services/models";
-import { diffOperation, orientArchiveDiff } from "../src/archiveDiff";
+import { diffOperation, orientArchiveDiff, isExternalInputElement } from "../src/archiveDiff";
 const mocks = vi.hoisted(() => ({
   Start: vi.fn(), Release: vi.fn(), Status: vi.fn(), Children: vi.fn(), FilteredChildren: vi.fn(), FileDiff: vi.fn(), Cancel: vi.fn(), SelectArchive: vi.fn(),
   FlatFiles: vi.fn(), archiveDiffDrafts: vi.fn(), events: new Map<string, () => void>(),
@@ -14,7 +14,7 @@ vi.mock("../src/stores/editor", () => ({
   }),
 }));
 vi.mock("@wailsio/runtime", () => ({ Events: { On: (name: string, callback: () => void) => mocks.events.set(name, callback) } }));
-import { useArchiveDiffStore, preserveTreeExpansion, type DiffTreeNode } from "../src/stores/archiveDiff";
+import { useArchiveDiffStore, preserveTreeExpansion, collectLeavesFromTree, type DiffTreeNode } from "../src/stores/archiveDiff";
 const ready = { id: "1", state: "ready", currentPath: "current.pvf", otherPath: "other.pvf", processed: 10, total: 10, added: 2, modified: 1, deleted: 3, error: "" };
 const file: ArchiveDiffFile = { path: "a.equ", operation: "add", beforeHash: "", afterHash: "hash", beforeType: 0, afterType: 1, beforeSize: 0, afterSize: 10, beforeExists: false, afterExists: true, beforeText: "", afterText: "new", textAvailable: true, message: "" };
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
@@ -323,4 +323,276 @@ test("refreshTreeForSavedFile 针对已展开的父目录进行局部刷新，�
   expect(store.tree[0].node.path).toBe("equipment");
   expect(store.tree[0].children?.length).toBe(1);
   expect(store.tree[0].children?.[0].node.operation).toBe("modify");
+});
+
+test("上一个差异文件与下一个差异文件导航能够按序切换并自动展开目录", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+
+  // 模拟 flatFiles 列表（3 个按路径升序的文件）
+  store.flatFiles = [
+    { path: "character/swordman.ani", name: "swordman.ani", isDir: false, operation: "modify", count: 1 },
+    { path: "equipment/weapon/katana.equ", name: "katana.equ", isDir: false, operation: "add", count: 1 },
+    { path: "equipment/weapon/sword.equ", name: "sword.equ", isDir: false, operation: "modify", count: 1 },
+  ];
+
+  // 初始状态下未选中任何文件，冷启动就绪（允许导航到第 1 个文件）
+  expect(store.currentFileIndex).toBe(-1);
+  expect(store.hasPreviousFile).toBe(false);
+  expect(store.hasNextFile).toBe(true);
+  expect(store.fileNavIndicator).toBe("0 / 3");
+
+  mocks.FileDiff.mockImplementation(async (_id: string, p: string) => ({
+    ...file,
+    path: p,
+  }));
+
+  // 打开第 1 个文件
+  await store.openFile(store.flatFiles[0]!);
+  expect(store.currentFileIndex).toBe(0);
+  expect(store.hasPreviousFile).toBe(false);
+  expect(store.hasNextFile).toBe(true);
+  expect(store.fileNavIndicator).toBe("1 / 3");
+
+  // 点击“下一个差异文件” -> 切换到第 2 个文件 katana.equ
+  mocks.FileDiff.mockResolvedValueOnce({
+    ...file,
+    path: "equipment/weapon/katana.equ",
+    afterText: "katana_content",
+  });
+  const nextRes = await store.openNextFile();
+  expect(nextRes).toBe(true);
+  expect(store.currentFileIndex).toBe(1);
+  expect(store.file?.path).toBe("equipment/weapon/katana.equ");
+  expect(store.hasPreviousFile).toBe(true);
+  expect(store.hasNextFile).toBe(true);
+  expect(store.fileNavIndicator).toBe("2 / 3");
+  // 确认祖先目录已自动加入 expandedKeys
+  expect(store.expandedKeys).toEqual(expect.arrayContaining(["equipment", "equipment/weapon"]));
+
+  // 再次点击“下一个差异文件” -> 切换到第 3 个文件（最后一个）
+  mocks.FileDiff.mockResolvedValueOnce({
+    ...file,
+    path: "equipment/weapon/sword.equ",
+    afterText: "sword_content",
+  });
+  await store.openNextFile();
+  expect(store.currentFileIndex).toBe(2);
+  expect(store.file?.path).toBe("equipment/weapon/sword.equ");
+  expect(store.hasPreviousFile).toBe(true);
+  expect(store.hasNextFile).toBe(false); // 最后一个文件，不能再点下一个
+  expect(store.fileNavIndicator).toBe("3 / 3");
+
+  // 点击“上一个差异文件” -> 回退到第 2 个文件 katana.equ
+  mocks.FileDiff.mockResolvedValueOnce({
+    ...file,
+    path: "equipment/weapon/katana.equ",
+    afterText: "katana_content",
+  });
+  const prevRes = await store.openPreviousFile();
+  expect(prevRes).toBe(true);
+  expect(store.currentFileIndex).toBe(1);
+  expect(store.file?.path).toBe("equipment/weapon/katana.equ");
+  expect(store.fileNavIndicator).toBe("2 / 3");
+});
+
+test("有未保存草稿时点击下一个文件触发确认弹窗保护，取消后高亮不漂移且不产生展开副作用", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+
+  store.flatFiles = [
+    { path: "a.equ", name: "a.equ", isDir: false, operation: "modify", count: 1 },
+    { path: "equipment/weapon/b.equ", name: "b.equ", isDir: false, operation: "modify", count: 1 },
+  ];
+
+  await store.openFile(store.flatFiles[0]!);
+  expect(store.currentFileIndex).toBe(0);
+  expect(store.selectedKeys).toEqual(["a.equ"]);
+  expect(store.expandedKeys).toEqual([]);
+
+  // 用户编辑了当前文件，草稿变脏
+  store.updateDraftText("unsaved_dirty_text");
+  expect(store.isDraftDirty).toBe(true);
+
+  // 点击下一个文件 -> 应当被拦截并弹出保存确认弹窗
+  const switched = await store.openNextFile();
+  expect(switched).toBe(false);
+  expect(store.showDraftConfirmModal).toBe(true);
+  expect(store.pendingSwitchNode?.path).toBe("equipment/weapon/b.equ");
+  // 核心断言：当前文件仍停留在 a.equ，高亮与祖先目录绝不提前被展开修改（事务零副作用）
+  expect(store.currentFileIndex).toBe(0);
+  expect(store.selectedKeys).toEqual(["a.equ"]);
+  expect(store.expandedKeys).toEqual([]);
+
+  // 用户取消弹窗切换
+  store.cancelDraftSwitch();
+  expect(store.showDraftConfirmModal).toBe(false);
+  expect(store.pendingSwitchNode).toBeNull();
+  expect(store.selectedKeys).toEqual(["a.equ"]);
+  expect(store.expandedKeys).toEqual([]);
+  expect(store.file?.path).toBe("a.equ");
+});
+
+test("初始未选中文件时支持冷启动一键打开第 1 个差异文件", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+
+  store.flatFiles = [
+    { path: "first.equ", name: "first.equ", isDir: false, operation: "add", count: 1 },
+    { path: "second.equ", name: "second.equ", isDir: false, operation: "modify", count: 1 },
+  ];
+
+  // 初始未选中文件
+  expect(store.currentFileIndex).toBe(-1);
+  expect(store.hasPreviousFile).toBe(false);
+  expect(store.hasNextFile).toBe(true); // 冷启动就绪
+  expect(store.fileNavIndicator).toBe("0 / 2");
+
+  mocks.FileDiff.mockResolvedValueOnce({
+    ...file,
+    path: "first.equ",
+    afterText: "first_content",
+  });
+
+  // 点击下一个文件 -> 触发冷启动，成功打开第 1 个文件
+  const ok = await store.openNextFile();
+  expect(ok).toBe(true);
+  expect(store.currentFileIndex).toBe(0);
+  expect(store.file?.path).toBe("first.equ");
+  expect(store.selectedKeys).toEqual(["first.equ"]);
+  expect(store.fileNavIndicator).toBe("1 / 2");
+  expect(store.hasPreviousFile).toBe(false);
+  expect(store.hasNextFile).toBe(true);
+});
+
+test("差异文件列表为空时的边界处理", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+
+  store.flatFiles = [];
+  expect(store.navigableFiles.length).toBe(0);
+  expect(store.currentFileIndex).toBe(-1);
+  expect(store.hasPreviousFile).toBe(false);
+  expect(store.hasNextFile).toBe(false);
+  expect(store.fileNavIndicator).toBe("");
+
+  const prevRes = await store.openPreviousFile();
+  const nextRes = await store.openNextFile();
+  expect(prevRes).toBe(false);
+  expect(nextRes).toBe(false);
+});
+
+test("反向对比模式下正确映射操作类型并联动过滤", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+
+  // 正向视角下为 add 的文件，在反向对比下应显示为 delete
+  store.flatFiles = [
+    { path: "add_item.equ", name: "add_item.equ", isDir: false, operation: "add", count: 1 },
+  ];
+
+  // 正向模式筛选 delete -> 无结果
+  store.filterOperation = "delete";
+  store.reverse = false;
+  expect(store.navigableFiles.length).toBe(0);
+
+  // 开启反向对比后，原本的 add 被映射为 delete -> 可被检索到
+  store.reverse = true;
+  expect(store.navigableFiles.length).toBe(1);
+  expect(store.navigableFiles[0]!.path).toBe("add_item.equ");
+});
+
+test("collectLeavesFromTree 能够正确递归收集多级目录下的叶子文件并过滤", () => {
+  const treeData: DiffTreeNode[] = [
+    {
+      key: "equipment",
+      label: "equipment",
+      isLeaf: false,
+      node: { path: "equipment", name: "equipment", isDir: true, operation: "", count: 2 },
+      children: [
+        {
+          key: "equipment/weapon",
+          label: "weapon",
+          isLeaf: false,
+          node: { path: "equipment/weapon", name: "weapon", isDir: true, operation: "", count: 1 },
+          children: [
+            {
+              key: "equipment/weapon/katana.equ",
+              label: "katana.equ",
+              isLeaf: true,
+              node: { path: "equipment/weapon/katana.equ", name: "katana.equ", isDir: false, operation: "add", count: 1 },
+            },
+          ],
+        },
+        {
+          key: "equipment/armor.equ",
+          label: "armor.equ",
+          isLeaf: true,
+          node: { path: "equipment/armor.equ", name: "armor.equ", isDir: false, operation: "modify", count: 1 },
+        },
+      ],
+    },
+  ];
+
+  // 全量收集
+  const allLeaves = collectLeavesFromTree(treeData, "all", false, "");
+  expect(allLeaves.map((n) => n.path)).toEqual([
+    "equipment/weapon/katana.equ",
+    "equipment/armor.equ",
+  ]);
+
+  // 按操作过滤 modify
+  const modifyLeaves = collectLeavesFromTree(treeData, "modify", false, "");
+  expect(modifyLeaves.map((n) => n.path)).toEqual(["equipment/armor.equ"]);
+
+  // 按关键字过滤 "katana"
+  const searchedLeaves = collectLeavesFromTree(treeData, "all", false, "katana");
+  expect(searchedLeaves.map((n) => n.path)).toEqual(["equipment/weapon/katana.equ"]);
+});
+
+test("isExternalInputElement 能够精准识别外部输入控件与编辑器内焦点", () => {
+  expect(isExternalInputElement(null)).toBe(false);
+
+  // 普通外部单行输入框与多行文本域
+  const inputEl = { tagName: "INPUT", isContentEditable: false, closest: () => null } as unknown as Element;
+  expect(isExternalInputElement(inputEl)).toBe(true);
+
+  const textareaEl = { tagName: "TEXTAREA", isContentEditable: false, closest: () => null } as unknown as Element;
+  expect(isExternalInputElement(textareaEl)).toBe(true);
+
+  // 普通无输入能力的 div 与按钮
+  const divEl = { tagName: "DIV", isContentEditable: false, closest: () => null } as unknown as Element;
+  expect(isExternalInputElement(divEl)).toBe(false);
+
+  // 处于 CodeMirror 编辑器内部的 contenteditable 容器
+  const cmContent = {
+    tagName: "DIV",
+    isContentEditable: true,
+    closest: (selector: string) => (selector === ".cm-editor" ? {} : null),
+  } as unknown as Element;
+  expect(isExternalInputElement(cmContent)).toBe(false);
+
+  // 包含在 editorContainer 内部的元素
+  const editorContainer = {
+    contains: (target: any) => target === cmContent,
+  } as unknown as Element;
+  expect(isExternalInputElement(cmContent, editorContainer)).toBe(false);
+
+  // 独立的外部富文本可编辑元素
+  const richTextEl = {
+    tagName: "DIV",
+    isContentEditable: true,
+    closest: () => null,
+  } as unknown as Element;
+  expect(isExternalInputElement(richTextEl)).toBe(true);
 });
