@@ -423,28 +423,81 @@ func (s *ExportService) executeSelectedTo(id, dir string, excluded []string) (st
 		}
 		return result, err
 	}
-	destinations := make(map[string]bool)
-	for _, file := range p.files {
-		dest, err := safeExportPath(dir, file.path)
-		if err != nil {
-			return "", err
-		}
-		if destinations[canonicalExportDestination(dest)] {
-			return "", fmt.Errorf("导出路径冲突: %s", file.path)
-		}
-		destinations[canonicalExportDestination(dest)] = true
-	}
-	for _, file := range p.files {
-		dest, _ := safeExportPath(dir, file.path)
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return "", err
-		}
-		if err := os.WriteFile(dest, file.data, 0o644); err != nil {
-			return "", err
-		}
+	if err := writeDirectDirectory(dir, p.files); err != nil {
+		return "", err
 	}
 	s.plan = nil
 	return dir, nil
+}
+
+// writeDirectDirectory 将文件列表安全、高效地写入目标目录。
+// 预先去重创建目录并利用并发 I/O 加速海量文件落地。
+// @author flobit
+func writeDirectDirectory(dir string, files []exportFile) error {
+	destinations := make(map[string]bool, len(files))
+	fileDests := make([]string, len(files))
+	uniqueDirs := make(map[string]struct{})
+
+	for i, file := range files {
+		dest, err := safeExportPath(dir, file.path)
+		if err != nil {
+			return err
+		}
+		canon := canonicalExportDestination(dest)
+		if destinations[canon] {
+			return fmt.Errorf("导出路径冲突: %s", file.path)
+		}
+		destinations[canon] = true
+		fileDests[i] = dest
+		uniqueDirs[filepath.Dir(dest)] = struct{}{}
+	}
+
+	for parentDir := range uniqueDirs {
+		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+			return err
+		}
+	}
+
+	workers := min(len(files), 16)
+	if len(files) <= 32 || workers <= 1 {
+		for i, file := range files {
+			if err := os.WriteFile(fileDests[i], file.data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	var firstErr atomic.Pointer[error]
+	var wg sync.WaitGroup
+	chunkSize := (len(files) + workers - 1) / workers
+
+	for w := 0; w < workers; w++ {
+		start := w * chunkSize
+		end := min(start+chunkSize, len(files))
+		if start >= end {
+			break
+		}
+		wg.Add(1)
+		go func(s, e int) {
+			defer wg.Done()
+			for i := s; i < e; i++ {
+				if firstErr.Load() != nil {
+					return
+				}
+				if err := os.WriteFile(fileDests[i], files[i].data, 0o644); err != nil {
+					firstErr.CompareAndSwap(nil, &err)
+					return
+				}
+			}
+		}(start, end)
+	}
+
+	wg.Wait()
+	if errPtr := firstErr.Load(); errPtr != nil {
+		return *errPtr
+	}
+	return nil
 }
 
 func writeModDirectory(parent string, pkg modpkg.Package, writer modpkg.Writer) (string, error) {

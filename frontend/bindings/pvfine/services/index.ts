@@ -58,6 +58,7 @@ export type {
     AppSettings,
     ArchiveDiffDraft,
     ArchiveDiffFile,
+    ArchiveDiffMergeResult,
     ArchiveDiffNode,
     ArchiveDiffRequest,
     ArchiveDiffStatus,

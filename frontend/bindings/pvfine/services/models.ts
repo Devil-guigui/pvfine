@@ -148,6 +148,16 @@ export interface ArchiveDiffFile {
     "message": string;
 }
 
+/**
+ * ArchiveDiffMergeResult 记录批量合并操作的结果汇总
+ */
+export interface ArchiveDiffMergeResult {
+    "successCount": number;
+    "failedCount": number;
+    "mergedPaths": string[] | null;
+    "errors"?: string[] | null;
+}
+
 export interface ArchiveDiffNode {
     "path": string;
     "name": string;

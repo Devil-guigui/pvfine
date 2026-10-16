@@ -272,7 +272,15 @@ function onCancelUnpack() {
 }
 
 async function onToolSelect(key: string): Promise<void> {
-  if (key === "archive-diff") { archiveDiff.open(); return; }
+  if (key === "archive-diff") {
+    if (!archive.open) {
+      message.warning("请先在主界面打开一个 PVF 归档，再与外部 PVF 进行对比");
+      return;
+    }
+    archiveDiff.open();
+    editor.openCompareTab();
+    return;
+  }
   if (key === "forge") {
     if (!archive.open) { message.warning("需先打开 PVF 归档"); return; }
     try { await editor.openForge(); }
