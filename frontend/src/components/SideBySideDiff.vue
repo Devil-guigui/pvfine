@@ -43,11 +43,12 @@ import { useArchiveDiffStore } from "../stores/archiveDiff";
 import { useEditorStore } from "../stores/editor";
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
 import { registerUndoHandler } from "../activeUndoBridge";
-import { isExternalInputElement } from "../archiveDiff";
+import { isArchiveDiffShortcutActive } from "../archiveDiff";
 
 const props = defineProps<{
   file: ArchiveDiffFile;
   reverse?: boolean;
+  active: boolean;
 }>();
 
 const diffStore = useArchiveDiffStore();
@@ -691,15 +692,14 @@ function previousDifference(): void {
 }
 
 function handleGlobalKeydown(e: KeyboardEvent): void {
-  if (!mergeViewInstance) return;
+  if (!mergeViewInstance || e.defaultPrevented) return;
 
   const isMod = e.ctrlKey || e.metaKey;
   const isAlt = e.altKey;
   const code = e.code;
   const key = e.key ? e.key.toLowerCase() : "";
 
-  // 避免在外部独立输入框（如顶栏搜索框）打字时误触发快捷键；而在文本编辑器内完全支持
-  if (isExternalInputElement(document.activeElement, mergeViewInstance.dom)) return;
+  if (!isArchiveDiffShortcutActive(props.active, document.activeElement, mergeViewInstance.dom)) return;
 
   // 0. 差异段落导航：Alt + Up / Alt + Down（仅限当前文件内部，文件间切换由 CompareWorkbench 统一处理）
   if (isAlt && !isMod) {
@@ -803,8 +803,7 @@ onMounted(() => {
     redo: () => performRedo(),
     priority: 100,
     isActive: () => {
-      if (!mergeViewInstance) return false;
-      return !isExternalInputElement(document.activeElement, mergeViewInstance.dom);
+      return isArchiveDiffShortcutActive(props.active, document.activeElement, mergeViewInstance?.dom ?? null);
     },
   });
   window.addEventListener("keydown", handleGlobalKeydown, true);

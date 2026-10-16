@@ -312,30 +312,20 @@ func (s *ArchiveDiffService) updateSessionAfterMerge(id string, mergedPaths []st
 		}
 	}
 
-	mergedSet := make(map[string]bool, len(mergedPaths))
+	// A previously merged file may have disappeared from changes and then be edited again.
 	for _, mp := range mergedPaths {
-		mergedSet[pvfversion.CanonicalPath(mp)] = true
+		key := pvfversion.CanonicalPath(mp)
+		if change, hasDiff := archiveDiffCheckSingleFileChange(p.other, p.current, key, mp); hasDiff {
+			p.changes[key] = change
+		} else {
+			delete(p.changes, key)
+		}
 	}
 
 	remainingChanges := make([]pvfversion.FileChange, 0, len(p.changes))
 	var added, deleted, modified int
 
-	for key, change := range p.changes {
-		if mergedSet[key] {
-			// 精确复核该文件在当前归档与对比归档间是否仍有未合入的剩余差异
-			if newChange, hasDiff := archiveDiffCheckSingleFileChange(p.other, p.current, key, change.DisplayPath); hasDiff {
-				remainingChanges = append(remainingChanges, newChange)
-				switch newChange.Operation {
-				case pvfversion.OperationAdd:
-					added++
-				case pvfversion.OperationDelete:
-					deleted++
-				default:
-					modified++
-				}
-			}
-			continue
-		}
+	for _, change := range p.changes {
 		remainingChanges = append(remainingChanges, change)
 		switch change.Operation {
 		case pvfversion.OperationAdd:

@@ -1,4 +1,4 @@
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import { Events } from "@wailsio/runtime";
 import type { TreeOption } from "naive-ui";
@@ -60,17 +60,20 @@ export function findNodeByPath(nodes: DiffTreeNode[], targetPath: string): DiffT
 }
 
 /**
- * 将旧树中已经展开加载过 children 的子树平滑保留并嫁接给新树，
- * 避免整树重新拉取时节点坍缩引发的视口抖动与闪烁。
- * @author flobit
+ * 保留已加载的层级，但重新读取内容，避免保留已消失或被筛选掉的差异。
  */
-export function preserveTreeExpansion(newNodes: DiffTreeNode[], oldNodes: DiffTreeNode[]): void {
-  for (const newNode of newNodes) {
+export async function preserveTreeExpansion(
+  newNodes: DiffTreeNode[],
+  oldNodes: DiffTreeNode[],
+  load: (path: string) => Promise<DiffTreeNode[]>,
+): Promise<void> {
+  await Promise.all(newNodes.map(async newNode => {
     const oldNode = findNodeByPath(oldNodes, newNode.node.path);
-    if (oldNode?.children && Array.isArray(oldNode.children)) {
-      newNode.children = oldNode.children;
+    if (newNode.node.isDir && oldNode?.children) {
+      newNode.children = await load(newNode.node.path);
+      await preserveTreeExpansion(newNode.children, oldNode.children, load);
     }
-  }
+  }));
 }
 
 /**
@@ -114,7 +117,11 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   const fileError = ref("");
   let epoch = 0;
   let fileEpoch = 0;
+  let viewEpoch = 0;
+  let treeSeq = 0;
+  let flatSeq = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let pendingStart: Promise<ArchiveDiffStatus | null> | undefined;
 
   // 视图模式与列表检索模式
   const viewMode = ref<"side-by-side" | "unified">("side-by-side");
@@ -135,7 +142,6 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   const originalDraftText = ref("");
   const isDraftDirty = computed(() => !!draftPath.value && draftText.value !== originalDraftText.value);
   const pendingSwitchNode = ref<ArchiveDiffNode | null>(null);
-  const pendingCloseTab = ref(false);
   const showDraftConfirmModal = ref(false);
 
   const busy = computed(() => starting.value || rootLoading.value || ["loading", "comparing", "classifying", "verifying", "sorting", "building", "sorting-tree"].includes(status.value?.state ?? ""));
@@ -252,8 +258,11 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     // 2. 否则通过后端接口拉取匹配文件，并在前端对关键字与目录路径进行双重过滤防线
     const id = status.value?.id;
     if (!id) return [];
+    const token = epoch;
+    const viewToken = viewEpoch;
     const op = getBackendOperation(filterOperation.value);
     const res = await ArchiveDiffService.FlatFiles(id, searchQuery.value, op);
+    if (token !== epoch || viewToken !== viewEpoch) return [];
     const normalizedDir = dirPath ? dirPath.toLowerCase().replace(/\/+$/, "") + "/" : "";
     return (res ?? [])
       .filter((f) => {
@@ -374,10 +383,12 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     }
 
     const currentSeq = ++searchTreeSeq;
+    const token = epoch;
+    const viewToken = viewEpoch;
     try {
       const op = getBackendOperation(filterOperation.value);
       const res = await ArchiveDiffService.FlatFiles(id, q, op);
-      if (currentSeq !== searchTreeSeq) return;
+      if (currentSeq !== searchTreeSeq || token !== epoch || viewToken !== viewEpoch) return;
       const files = (res ?? []).filter((f) => !f.isDir);
       const limited = files.slice(0, 1000);
       const { tree: resultTree, dirKeys } = buildTreeFromFiles(limited);
@@ -389,13 +400,14 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
         expandedKeys.value = Array.from(mergedKeys);
       }
     } catch {
-      if (currentSeq === searchTreeSeq) {
+      if (currentSeq === searchTreeSeq && token === epoch && viewToken === viewEpoch) {
         searchedTreeNodes.value = [];
       }
     }
   }
 
   function clearSearch() {
+    searchTreeSeq++;
     searchQuery.value = "";
     searchedTreeNodes.value = [];
     if (savedExpandedKeys.value !== null) {
@@ -420,6 +432,12 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   });
 
   function clearResult() {
+    viewEpoch++;
+    treeSeq++;
+    flatSeq++;
+    searchTreeSeq++;
+    flatLoading.value = false;
+    merging.value = false;
     rootLoading.value = false;
     clearTimeout(timer);
     status.value = null;
@@ -479,7 +497,12 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     starting.value = true;
     error.value = "";
     try {
-      const result = await ArchiveDiffService.Start({ path: otherPath.value, drafts });
+      // Start replaces the backend session; serialize outstanding start calls.
+      if (pendingStart) await pendingStart.catch(() => {});
+      if (token !== epoch) return;
+      const request = ArchiveDiffService.Start({ path: otherPath.value, drafts });
+      pendingStart = request;
+      const result = await request;
       if (token !== epoch) {
         if (result) await ArchiveDiffService.Cancel(result.id);
         return;
@@ -499,9 +522,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     const token = epoch;
     rootLoading.value = true;
     try {
-      const op = getBackendOperation(filterOperation.value);
-      const nodes = await ArchiveDiffService.FilteredChildren(id, "", op);
-      if (token === epoch) tree.value = treeNodes(nodes ?? []);
+      await refreshTreePreservingExpansion();
     } catch (err) {
       if (token === epoch) error.value = errorMessage(err);
     } finally {
@@ -517,6 +538,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
       status.value = result;
       if (result.state === "ready") {
         await loadRootTree();
+        if (token !== epoch) return;
         if (listMode.value === "flat") {
           void loadFlatFiles();
         } else if (searchQuery.value.trim()) {
@@ -535,12 +557,14 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   async function loadChildren(option: TreeOption) {
     const target = option as DiffTreeNode;
     const token = epoch;
+    const viewToken = viewEpoch;
+    const requestSeq = treeSeq;
     const id = status.value?.id;
     if (!id || target.children) return;
     try {
       const op = getBackendOperation(filterOperation.value);
       const nodes = await ArchiveDiffService.FilteredChildren(id, target.node.path, op);
-      if (token !== epoch) return;
+      if (token !== epoch || viewToken !== viewEpoch || requestSeq !== treeSeq) return;
       target.children = treeNodes(nodes ?? []);
       tree.value = [...tree.value];
     } catch (err) { if (token === epoch) error.value = errorMessage(err); }
@@ -555,86 +579,49 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     const id = status.value?.id;
     if (!id) return;
     const token = epoch;
+    const viewToken = viewEpoch;
+    const seq = ++treeSeq;
     const op = getBackendOperation(filterOperation.value);
     try {
       const nodes = await ArchiveDiffService.FilteredChildren(id, "", op);
-      if (token !== epoch) return;
+      if (token !== epoch || viewToken !== viewEpoch || seq !== treeSeq) return;
       const newRoots = treeNodes(nodes ?? []);
-      preserveTreeExpansion(newRoots, tree.value);
+      await preserveTreeExpansion(newRoots, tree.value, async path => {
+        if (token !== epoch || viewToken !== viewEpoch || seq !== treeSeq) return [];
+        return treeNodes(await ArchiveDiffService.FilteredChildren(id, path, op) ?? []);
+      });
+      if (token !== epoch || viewToken !== viewEpoch || seq !== treeSeq) return;
       tree.value = newRoots;
     } catch (err) {
-      if (token === epoch) error.value = errorMessage(err);
+      if (token === epoch && viewToken === viewEpoch && seq === treeSeq) error.value = errorMessage(err);
     }
-  }
-
-  /**
-   * 针对保存的单文件，局部精准更新该文件所在目录的子节点与祖先统计计数，
-   * 完全不触动树上其它未修改目录与节点，彻底杜绝闪烁和抖动。
-   * @author flobit
-   */
-  async function refreshTreeForSavedFile(savedPath: string): Promise<void> {
-    const id = status.value?.id;
-    if (!id) return;
-    const op = getBackendOperation(filterOperation.value);
-
-    const normalized = savedPath.replaceAll("\\", "/").replace(/^\/+/, "");
-    const lastSlash = normalized.lastIndexOf("/");
-    const parentDir = lastSlash > 0 ? normalized.substring(0, lastSlash) : "";
-
-    if (parentDir) {
-      const parentNode = findNodeByPath(tree.value, parentDir);
-      if (parentNode) {
-        // 仅拉取该父目录下最新的子节点列表
-        const freshNodes = await ArchiveDiffService.FilteredChildren(id, parentDir, op);
-        parentNode.children = treeNodes(freshNodes ?? []);
-        parentNode.node.count = (freshNodes ?? []).length;
-
-        // 静默同步顶级根目录的 count 计数值
-        const rootNodes = await ArchiveDiffService.FilteredChildren(id, "", op);
-        if (rootNodes) {
-          for (const r of rootNodes) {
-            const match = findNodeByPath(tree.value, r.path);
-            if (match) match.node.count = r.count;
-          }
-        }
-        tree.value = [...tree.value];
-        return;
-      }
-    }
-
-    // 若文件在根目录或尚未加载展开父节点，走平滑保持整树刷新
-    await refreshTreePreservingExpansion();
   }
 
   /**
    * 刷新当前差异视图（平铺列表或目录树）。
-   * 若传入 savedPath，则执行静默/局部精准更新，避免全量重载引发的视口抖动。
+   * 仅重读已加载层级，保留展开状态，同时刷新所有祖先的统计。
    * @author flobit
    */
-  async function refreshCurrentView(savedPath?: string): Promise<void> {
-    if (listMode.value === "flat") {
-      await loadFlatFiles(true);
-    } else if (searchQuery.value.trim()) {
-      await searchTree(searchQuery.value, true);
-      void loadFlatFiles(true);
-    } else if (savedPath) {
-      await refreshTreeForSavedFile(savedPath);
-      void loadFlatFiles(true);
-    } else {
-      await refreshTreePreservingExpansion();
-      void loadFlatFiles(true);
-    }
+  async function refreshCurrentView(_savedPath?: string): Promise<void> {
+    await Promise.all([
+      refreshTreePreservingExpansion(),
+      loadFlatFiles(true),
+      listMode.value === "tree" && searchQuery.value.trim()
+        ? searchTree(searchQuery.value, true) : Promise.resolve(),
+    ]);
   }
 
   async function setFilterOperation(op: string) {
     if (filterOperation.value === op) return;
     filterOperation.value = op;
+    viewEpoch++;
     expandedKeys.value = [];
     await refreshCurrentView();
   }
 
   async function toggleReverse() {
     reverse.value = !reverse.value;
+    viewEpoch++;
     expandedKeys.value = [];
     await refreshCurrentView();
   }
@@ -648,14 +635,16 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     if (!silent) {
       flatLoading.value = true;
     }
+    const token = epoch;
+    const seq = ++flatSeq;
     try {
       // 保持拉取全量差异文件底表，前端响应式过滤检索，跨树形与平铺模式状态绝对同步
       const res = await ArchiveDiffService.FlatFiles(id, "", "");
-      flatFiles.value = res ?? [];
+      if (token === epoch && seq === flatSeq) flatFiles.value = res ?? [];
     } catch (err) {
-      error.value = errorMessage(err);
+      if (token === epoch && seq === flatSeq) error.value = errorMessage(err);
     } finally {
-      if (!silent) {
+      if (token === epoch && seq === flatSeq) {
         flatLoading.value = false;
       }
     }
@@ -772,6 +761,8 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     activeNode.value = node;
     const token = ++fileEpoch;
     const sessionEpoch = epoch;
+    const previousDraftPath = draftPath.value;
+    const previousDraftText = draftText.value;
     if (!silent) {
       fileLoading.value = true;
       file.value = null;
@@ -783,7 +774,9 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
         file.value = result;
         // 方案 B（工作台物理侧锚定）：可编辑底稿始终严格绑定先选中的本地工作区归档文本（result.afterText），彻底杜绝覆盖本地内容
         const baseTxt = result?.afterText ?? "";
-        setDraft(node.path, baseTxt, baseTxt);
+        if (!silent || (draftPath.value === previousDraftPath && draftText.value === previousDraftText)) {
+          setDraft(node.path, baseTxt, baseTxt);
+        }
       }
     } catch (err) {
       if (token === fileEpoch && sessionEpoch === epoch) fileError.value = errorMessage(err);
@@ -796,15 +789,10 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
 
   async function confirmDraftSaveAndSwitch(): Promise<void> {
     if (draftPath.value && isDraftDirty.value) {
-      await mergeText(draftPath.value, draftText.value);
+      if (!await mergeText(draftPath.value, draftText.value)) return;
+      if (isDraftDirty.value) return;
     }
     showDraftConfirmModal.value = false;
-    if (pendingCloseTab.value) {
-      pendingCloseTab.value = false;
-      useEditorStore().closeTab(useEditorStore().activeTab?.index ?? -999);
-      close();
-      return;
-    }
     const nextNode = pendingSwitchNode.value;
     pendingSwitchNode.value = null;
     if (nextNode) {
@@ -815,12 +803,6 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
   function confirmDraftDiscardAndSwitch(): void {
     discardDraft();
     showDraftConfirmModal.value = false;
-    if (pendingCloseTab.value) {
-      pendingCloseTab.value = false;
-      useEditorStore().closeTab(useEditorStore().activeTab?.index ?? -999);
-      close();
-      return;
-    }
     const nextNode = pendingSwitchNode.value;
     pendingSwitchNode.value = null;
     if (nextNode) {
@@ -830,88 +812,113 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
 
   function cancelDraftSwitch(): void {
     pendingSwitchNode.value = null;
-    pendingCloseTab.value = false;
     showDraftConfirmModal.value = false;
   }
 
   async function mergeSelected() {
     const id = status.value?.id;
     const paths = Array.from(selectedPaths.value);
-    if (!id || paths.length === 0) return null;
+    if (!id || paths.length === 0 || merging.value) return null;
+    const token = epoch;
     merging.value = true;
     try {
       const res = await ArchiveDiffService.MergeFiles(id, paths);
+      if (token !== epoch) return res;
       if (res && res.mergedPaths && res.mergedPaths.length > 0) {
         await useEditorStore().refreshMergedFiles(res.mergedPaths);
+        if (token !== epoch) return res;
         deselectPaths(res.mergedPaths);
         if (activeNode.value && res.mergedPaths.includes(activeNode.value.path)) {
           await openFileDirect(activeNode.value, true);
         }
+        if (token !== epoch) return res;
         await refreshCurrentView();
+        await refreshStatus(token, id);
       }
       return res;
     } finally {
-      merging.value = false;
+      if (token === epoch) merging.value = false;
     }
   }
 
   async function mergeSingleFile(path: string): Promise<boolean> {
     const id = status.value?.id;
-    if (!id || !path) return false;
+    if (!id || !path || merging.value) return false;
+    const token = epoch;
     merging.value = true;
     try {
       const res = await ArchiveDiffService.MergeFiles(id, [path]);
+      if (token !== epoch) return false;
       if (res && res.successCount > 0) {
         await useEditorStore().refreshMergedFiles([path]);
+        if (token !== epoch) return false;
         deselectPaths([path]);
         if (activeNode.value && activeNode.value.path === path) {
           await openFileDirect(activeNode.value, true);
         }
+        if (token !== epoch) return false;
         await refreshCurrentView(path);
+        await refreshStatus(token, id);
         return true;
       }
       return false;
     } finally {
-      merging.value = false;
+      if (token === epoch) merging.value = false;
     }
   }
 
   async function mergeText(path: string, text: string): Promise<boolean> {
     const id = status.value?.id;
-    if (!id || !path) return false;
+    if (!id || !path || merging.value) return false;
+    const token = epoch;
     merging.value = true;
     try {
       await ArchiveDiffService.MergeText(id, path, text);
+      if (token !== epoch) return false;
       await useEditorStore().refreshMergedFiles([path]);
-      originalDraftText.value = text;
-      draftText.value = text;
-      if (activeNode.value && activeNode.value.path === path) {
+      if (token !== epoch) return false;
+      if (draftPath.value === path) originalDraftText.value = text;
+      if (activeNode.value?.path === path && !isDraftDirty.value) {
         await openFileDirect(activeNode.value, true);
       }
+      if (token !== epoch) return false;
       await refreshCurrentView(path);
+      await refreshStatus(token, id);
       return true;
     } finally {
-      merging.value = false;
+      if (token === epoch) merging.value = false;
     }
   }
 
+  async function refreshStatus(token: number, id: string) {
+    if (token !== epoch) return;
+    const result = await ArchiveDiffService.Status(id);
+    if (token === epoch && result) status.value = result;
+  }
+
   async function cancel() {
+    starting.value = false;
+    merging.value = false;
     rootLoading.value = false;
+    flatLoading.value = false;
     const id = status.value?.id;
-    epoch++;
+    const token = ++epoch;
+    fileEpoch++;
+    fileLoading.value = false;
     clearTimeout(timer);
     if (id) {
       if (status.value) status.value = { ...status.value, state: "cancelled" };
       try { await ArchiveDiffService.Cancel(id); }
-      catch (err) { error.value = errorMessage(err); }
+      catch (err) { if (token === epoch) error.value = errorMessage(err); }
     }
   }
 
   async function onArchiveReloaded() {
     if (otherPath.value) {
-      if (busy.value) {
-        await cancel();
-      }
+      const cancelled = cancel();
+      const token = epoch;
+      await cancelled;
+      if (token !== epoch) return;
       await refresh();
     } else {
       clearResult();
@@ -930,7 +937,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     viewMode, listMode, filterOperation, searchQuery, flatFiles, flatLoading, displayedTree,
     lineWrapping,
     selectedPaths, merging, draftPath, draftText, originalDraftText, isDraftDirty,
-    showDraftConfirmModal, pendingSwitchNode, pendingCloseTab,
+    showDraftConfirmModal, pendingSwitchNode,
     open, close, selectArchive, refresh, loadRootTree, loadChildren, openFile, openFileDirect, cancel,
     toggleSelect, selectAll, deselectAll, clearSelection, isSelected, isDirSelected, isDirIndeterminate, getDirSelectionState,
     toggleSelectDir, getMatchingFilesUnderDir, searchTree, clearSearch, collapseAll, setFilterOperation, toggleReverse,

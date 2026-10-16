@@ -40,7 +40,6 @@ import {
   type EditorPaneId,
   type EditorTab,
 } from "../stores/editor";
-import { useArchiveDiffStore } from "../stores/archiveDiff";
 import CompareWorkbench from "./CompareWorkbench.vue";
 import { useArchiveStore } from "../stores/archive";
 import { useExplorerStore } from "../stores/explorer";
@@ -351,17 +350,6 @@ function onActive(key: string | number): void {
 }
 
 function onClose(index: number): void {
-  if (index === COMPARE_TAB_INDEX) {
-    const diff = useArchiveDiffStore();
-    if (diff.isDraftDirty) {
-      diff.pendingCloseTab = true;
-      diff.showDraftConfirmModal = true;
-      return;
-    }
-    editor.closeTab(index, paneId);
-    diff.close();
-    return;
-  }
   editor.requestCloseTab(index, paneId);
 }
 
@@ -771,6 +759,7 @@ function onDrop(event: DragEvent): void {
         <CompareWorkbench
           v-if="tab.index === COMPARE_TAB_INDEX"
           :theme-id="props.themeId"
+          :active="editor.activePaneId === paneId && activeTab?.index === tab.index"
         />
 
         <!-- 普通文件编辑模式 -->

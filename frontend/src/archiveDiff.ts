@@ -27,9 +27,16 @@ export function archiveName(path: string): string {
  */
 export function isExternalInputElement(el: Element | null, editorContainer?: Element | null): boolean {
   if (!el) return false;
+  if (editorContainer && el.closest(".cm-editor") && !editorContainer.contains(el)) return true;
   const isInput = el.tagName === "INPUT" || el.tagName === "TEXTAREA" || (el as HTMLElement).isContentEditable;
   if (!isInput) return false;
   if (editorContainer && editorContainer.contains(el)) return false;
   if (el.closest(".cm-editor")) return false;
   return true;
+}
+
+export function isArchiveDiffShortcutActive(active: boolean, el: Element | null, container: Element | null): boolean {
+  if (!active || !container) return false;
+  if (el?.closest('[role="dialog"], [role="alertdialog"]') && !container.contains(el)) return false;
+  return !isExternalInputElement(el, container);
 }

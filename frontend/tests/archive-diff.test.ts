@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createPinia, disposePinia, setActivePinia, type Pinia } from "pinia";
-import type { ArchiveDiffFile } from "../bindings/pvfine/services/models";
-import { diffOperation, orientArchiveDiff, isExternalInputElement } from "../src/archiveDiff";
+import type { ArchiveDiffFile, ArchiveDiffNode } from "../bindings/pvfine/services/models";
+import { diffOperation, orientArchiveDiff, isExternalInputElement, isArchiveDiffShortcutActive } from "../src/archiveDiff";
 const mocks = vi.hoisted(() => ({
   Start: vi.fn(), Release: vi.fn(), Status: vi.fn(), Children: vi.fn(), FilteredChildren: vi.fn(), FileDiff: vi.fn(), Cancel: vi.fn(), SelectArchive: vi.fn(),
-  FlatFiles: vi.fn(), archiveDiffDrafts: vi.fn(), events: new Map<string, () => void>(),
+  FlatFiles: vi.fn(), MergeText: vi.fn(), MergeFiles: vi.fn(), archiveDiffDrafts: vi.fn(), events: new Map<string, () => void>(),
 }));
 vi.mock("../bindings/pvfine/services", () => ({ ArchiveDiffService: mocks }));
 vi.mock("../src/stores/editor", () => ({
@@ -131,6 +131,116 @@ test("归档重载后若已配置目标则自动刷新对比，未配置时保�
   expect(mocks.Start).toHaveBeenCalledTimes(3);
 });
 
+test("Start 未返回时重载可重新启动，旧会话不会覆盖新结果", async () => {
+  const store = useArchiveDiffStore();
+  store.otherPath = "other.pvf";
+  const pending = deferred<typeof ready>();
+  mocks.Start.mockReturnValueOnce(pending.promise).mockResolvedValue({ ...ready, id: "2" });
+  mocks.Status.mockResolvedValue({ ...ready, id: "2" });
+  const first = store.refresh();
+  expect(store.starting).toBe(true);
+  mocks.events.get("archive:reloaded")?.();
+  pending.resolve(ready);
+  await first;
+  await vi.waitFor(() => expect(store.status?.id).toBe("2"));
+  await vi.waitFor(() => expect(store.busy).toBe(false));
+  expect(mocks.Cancel).toHaveBeenCalledWith("1");
+  expect(mocks.Start).toHaveBeenCalledTimes(2);
+});
+
+test("重载等待取消时关闭工作台不会重新启动", async () => {
+  const store = useArchiveDiffStore();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+  const pending = deferred<void>();
+  mocks.Cancel.mockReturnValueOnce(pending.promise);
+  mocks.events.get("archive:reloaded")?.();
+  store.close();
+  pending.resolve();
+  await Promise.resolve();
+  expect(mocks.Start).toHaveBeenCalledTimes(1);
+  expect(store.status).toBeNull();
+});
+
+test("筛选重读已加载目录，移除旧操作及已合并文件", async () => {
+  const store = useArchiveDiffStore();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+  const added = { path: "equipment/a.equ", name: "a.equ", isDir: false, operation: "add", count: 1 };
+  const modified = { ...added, path: "equipment/b.equ", name: "b.equ", operation: "modify" };
+  mocks.Children.mockResolvedValueOnce([added, modified]);
+  await store.loadChildren(store.tree[0]!);
+  mocks.FilteredChildren.mockImplementation(async (_id, parent, op) =>
+    parent ? (op === "modify" ? [modified] : [added, modified]) :
+      [{ path: "equipment", name: "equipment", isDir: true, count: op === "modify" ? 1 : 2, operation: "" }]);
+  await store.setFilterOperation("modify");
+  expect(collectLeavesFromTree(store.tree).map(node => node.path)).toEqual(["equipment/b.equ"]);
+  mocks.FilteredChildren.mockResolvedValue([]);
+  await store.refreshCurrentView("equipment/b.equ");
+  expect(store.tree).toEqual([]);
+});
+
+test("后返回的旧筛选与旧平铺请求不能恢复过期数据", async () => {
+  const store = useArchiveDiffStore();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+  const staleNode = { path: "stale.equ", name: "stale.equ", isDir: false, operation: "modify", count: 1 };
+  const pending = deferred<ArchiveDiffNode[]>();
+  mocks.FilteredChildren.mockReturnValueOnce(pending.promise).mockResolvedValue([]);
+  const oldFilter = store.setFilterOperation("modify");
+  await store.setFilterOperation("delete");
+  pending.resolve([staleNode]);
+  await oldFilter;
+  expect(store.filterOperation).toBe("delete");
+  expect(store.tree).toEqual([]);
+  const flat = deferred<ArchiveDiffNode[]>();
+  mocks.FlatFiles.mockReturnValueOnce(flat.promise);
+  const loading = store.loadFlatFiles();
+  store.close();
+  flat.resolve([staleNode]);
+  await loading;
+  expect(store.flatFiles).toEqual([]);
+  expect(store.flatLoading).toBe(false);
+});
+
+test("清空搜索后旧请求不能恢复搜索树，平铺保存同步更新目录树", async () => {
+  const store = useArchiveDiffStore();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+  const pending = deferred<ArchiveDiffNode[]>();
+  mocks.FlatFiles.mockReturnValueOnce(pending.promise);
+  store.searchQuery = "stale";
+  const searching = store.searchTree("stale");
+  store.clearSearch();
+  pending.resolve([{ path: "stale.equ", name: "stale.equ", isDir: false, operation: "add", count: 1 }]);
+  await searching;
+  store.searchQuery = "another";
+  expect(store.displayedTree).toEqual([]);
+  store.clearSearch();
+  store.listMode = "flat";
+  mocks.FilteredChildren.mockResolvedValue([]);
+  await store.refreshCurrentView("equipment/a.equ");
+  expect(store.tree).toEqual([]);
+});
+
+test("保存期间继续输入不会丢草稿，保存后刷新统计", async () => {
+  const store = useArchiveDiffStore();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+  store.setDraft("a.equ", "saved", "original");
+  const pending = deferred<void>();
+  mocks.MergeText.mockReturnValueOnce(pending.promise);
+  mocks.Status.mockResolvedValue({ ...ready, modified: 4 });
+  const saving = store.mergeText("a.equ", "saved");
+  store.updateDraftText("keep typing");
+  pending.resolve();
+  expect(await saving).toBe(true);
+  expect(store.draftText).toBe("keep typing");
+  expect(store.originalDraftText).toBe("saved");
+  expect(store.isDraftDirty).toBe(true);
+  expect(store.counts.modified).toBe(4);
+});
+
 test("根据关键字过滤后勾选目录仅选择匹配文件，绝不包含被隐藏的文件", async () => {
   const store = useArchiveDiffStore();
   store.open();
@@ -244,7 +354,7 @@ test("openFileDirect 在静默模式下不置空 file 且不设置 fileLoading �
   expect(store.fileLoading).toBe(false);
 });
 
-test("preserveTreeExpansion 能够将旧树已展开的 children 平滑嫁接给新树", () => {
+test("preserveTreeExpansion 保留加载层级但从后端刷新内容", async () => {
   const oldTree: DiffTreeNode[] = [
     {
       key: "equipment",
@@ -280,13 +390,16 @@ test("preserveTreeExpansion 能够将旧树已展开的 children 平滑嫁接给
     },
   ];
 
-  preserveTreeExpansion(newTree, oldTree);
+  const load = vi.fn(async (path: string) =>
+    path === "equipment" ? oldTree[0].children! : []);
+  await preserveTreeExpansion(newTree, oldTree, load);
 
   // 断言：newTree 的 equipment 节点成功保留了已展开的 children
   expect(newTree[0].children).toBeDefined();
   expect(newTree[0].children?.length).toBe(1);
   expect(newTree[0].children?.[0].key).toBe("equipment/weapon");
-  expect(newTree[0].children?.[0].children?.length).toBe(1);
+  expect(newTree[0].children?.[0].children).toEqual([]);
+  expect(load.mock.calls.map(([path]) => path)).toEqual(["equipment", "equipment/weapon"]);
 });
 
 test("refreshTreeForSavedFile 针对已展开的父目录进行局部刷新，不破坏整树状态", async () => {
@@ -587,6 +700,8 @@ test("isExternalInputElement 能够精准识别外部输入控件与编辑器内
     contains: (target: any) => target === cmContent,
   } as unknown as Element;
   expect(isExternalInputElement(cmContent, editorContainer)).toBe(false);
+  const otherEditor = { contains: () => false } as unknown as Element;
+  expect(isExternalInputElement(cmContent, otherEditor)).toBe(true);
 
   // 独立的外部富文本可编辑元素
   const richTextEl = {
@@ -595,4 +710,16 @@ test("isExternalInputElement 能够精准识别外部输入控件与编辑器内
     closest: () => null,
   } as unknown as Element;
   expect(isExternalInputElement(richTextEl)).toBe(true);
+});
+
+test("对比快捷键仅在活动视图响应，主编辑器与模态框焦点不被劫持", () => {
+  const inside = { tagName: "DIV", isContentEditable: true, closest: (s: string) => s === ".cm-editor" ? {} : null } as unknown as Element;
+  const foreign = { ...inside } as unknown as Element;
+  const container = { contains: (el: Element) => el === inside } as unknown as Element;
+  expect(isArchiveDiffShortcutActive(false, inside, container)).toBe(false);
+  expect(isArchiveDiffShortcutActive(true, inside, container)).toBe(true);
+  expect(isArchiveDiffShortcutActive(true, foreign, container)).toBe(false);
+  const dialog = { tagName: "BUTTON", closest: () => ({}) } as unknown as Element;
+  expect(isArchiveDiffShortcutActive(true, dialog, container)).toBe(false);
+  expect(isArchiveDiffShortcutActive(true, inside, null)).toBe(false);
 });

@@ -159,13 +159,37 @@ func TestArchiveDiffStringPoolDifferenceAndMerge(t *testing.T) {
 	if err := diffService.MergeText(status.ID, "etc/test.etc", newContent); err != nil {
 		t.Fatalf("MergeText failed: %v", err)
 	}
+	files, err := diffService.FlatFiles(status.ID, "test.etc", "modify")
+	if err != nil || len(files) != 1 {
+		t.Fatalf("re-edited merged file missing from diff: files=%+v err=%v", files, err)
+	}
+	detail, err := diffService.FileDiff(status.ID, "etc/test.etc")
+	if err != nil || detail.Operation != "modify" || !strings.Contains(detail.AfterText, "manually_edited") {
+		t.Fatalf("re-edited file detail: %+v err=%v", detail, err)
+	}
+	updated, err := diffService.Status(status.ID)
+	if err != nil || updated.Modified != 1 {
+		t.Fatalf("re-edited file statistics: %+v err=%v", updated, err)
+	}
+	exports := NewExportService(core)
+	preview, err := exports.Prepare(ExportRequest{Source: "archive-diff", DiffID: status.ID, Mode: "direct", Scopes: []string{"etc/test.etc"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := exports.executeTo(preview.ID, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := readExportFile(t, root, "etc/test.etc"); !strings.Contains(text, "manually_edited") {
+		t.Fatalf("export lost re-edited merged file: %q", text)
+	}
 	// 测试通过目录路径合并整个目录下的所有差异文件（包含仍有剩余差异的 test.etc 与未合并的 added.etc）
 	dirMergeRes, err := diffService.MergeFiles(status.ID, []string{"etc"})
 	if err != nil {
 		t.Fatalf("MergeFiles by directory failed: %v", err)
 	}
-	if dirMergeRes.SuccessCount != 1 {
-		t.Fatalf("Directory merge expected 1 remaining file merged, got: %+v", dirMergeRes)
+	if dirMergeRes.SuccessCount != 2 {
+		t.Fatalf("Directory merge expected 2 remaining files merged, got: %+v", dirMergeRes)
 	}
 }
 

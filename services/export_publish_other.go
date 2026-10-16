@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !windows
 
 package services
 
@@ -9,8 +9,8 @@ import (
 )
 
 func publishModDirectory(temp, dest string) error {
-	// Windows and macOS refuse to rename a directory over an existing directory.
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	// macOS refuses to rename a directory over an existing directory.
+	if runtime.GOOS == "darwin" {
 		return os.Rename(temp, dest)
 	}
 	if err := os.Mkdir(dest, 0o755); err != nil {

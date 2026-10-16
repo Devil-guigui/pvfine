@@ -49,7 +49,7 @@ import { useArchiveDiffStore, type DiffTreeNode } from "../stores/archiveDiff";
 import { useArchiveStore } from "../stores/archive";
 import { useSettingsStore } from "../stores/settings";
 import { useExportStore } from "../stores/export";
-import { archiveName, diffOperation, isExternalInputElement } from "../archiveDiff";
+import { archiveName, diffOperation, isArchiveDiffShortcutActive } from "../archiveDiff";
 import { computeDiffLines } from "../textDiff";
 import type { ResolvedThemeId } from "../theme";
 import UnifiedDiff from "./UnifiedDiff.vue";
@@ -57,6 +57,7 @@ import SideBySideDiff from "./SideBySideDiff.vue";
 
 const props = defineProps<{
   themeId?: ResolvedThemeId;
+  active: boolean;
 }>();
 
 const diff = useArchiveDiffStore();
@@ -64,14 +65,13 @@ const archive = useArchiveStore();
 const settings = useSettingsStore();
 const exporter = useExportStore();
 const message = useMessage();
+const workbenchRef = ref<HTMLDivElement | null>(null);
 
 function handleWorkbenchKeydown(e: KeyboardEvent): void {
+  if (e.defaultPrevented || !isArchiveDiffShortcutActive(props.active, document.activeElement, workbenchRef.value)) return;
   const isAlt = e.altKey;
   const isMod = e.ctrlKey || e.metaKey;
   if (!isAlt || isMod) return;
-
-  // 仅当用户在外部独立输入框（如顶栏搜索框）打字时跳过；在文本编辑器内完全支持快捷键
-  if (isExternalInputElement(document.activeElement)) return;
 
   const code = e.code;
   // IDEA 规范：Alt + Left / Alt + Right 专用于差异文件之间的线性切换
@@ -371,7 +371,7 @@ function switchToListMode(mode: "tree" | "flat") {
 </script>
 
 <template>
-  <div class="compare-workbench-root">
+  <div ref="workbenchRef" class="compare-workbench-root">
     <!-- 顶部配置栏 (支持折叠收起) -->
     <div v-show="!isHeaderCollapsed || diff.status?.state !== 'ready'" class="compare-header-bar">
       <!-- 本地归档展示 -->
@@ -728,6 +728,7 @@ function switchToListMode(mode: "tree" | "flat") {
           <SideBySideDiff
             v-if="diff.viewMode === 'side-by-side' && diff.file?.textAvailable"
             :file="diff.file"
+            :active="props.active"
           />
 
           <!-- 单栏 Unified 模式 -->

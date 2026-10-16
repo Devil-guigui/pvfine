@@ -11,6 +11,7 @@ import { useExplorerStore } from "./explorer";
 import { useScriptStore } from "./script";
 import { startDebugTiming } from "./debugTiming";
 import { hasLongLine } from "../editorWrapping";
+import { useArchiveDiffStore } from "./archiveDiff";
 
 export type EditorPaneId = string;
 export type SplitOrientation = "columns" | "rows";
@@ -182,6 +183,7 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   function isDirty(tab: EditorTab): boolean {
+    if (tab.index === COMPARE_TAB_INDEX) return useArchiveDiffStore().isDraftDirty;
     if (!tab.editable) return false;
     return isTextDirty(tab) || hasGUIDirty(tab.index);
   }
@@ -409,6 +411,7 @@ export const useEditorStore = defineStore("editor", () => {
       const globalTabIndex = tabs.value.findIndex((tab) => tab.index === index);
       if (globalTabIndex >= 0) tabs.value.splice(globalTabIndex, 1);
       clearExplorerSelection(tab?.path);
+      if (index === COMPARE_TAB_INDEX) useArchiveDiffStore().close();
     }
 
     if (pane.tabIndexes.length === 0 && isSplit.value) {
@@ -448,6 +451,7 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     tabs.value = tabs.value.filter((tab) => !removedIndexes.has(tab.index));
+    if (removedIndexes.has(COMPARE_TAB_INDEX)) useArchiveDiffStore().close();
     clearExplorerSelection(removedPaths);
 
     while (isSplit.value) {
@@ -692,7 +696,7 @@ export const useEditorStore = defineStore("editor", () => {
     if (!source || source.text !== request.text) throw new Error("商店草稿已变化，请关闭表单并重新打开");
     const gui = useFileGUIStore();
     const epoch = gui.epoch;
-    request = { ...request, drafts: allFiles.value.filter(isDirty).map((tab) => ({ fileIndex: tab.index, path: tab.path, text: tab.text })) };
+    request = { ...request, drafts: allFiles.value.filter(isTextDirty).map((tab) => ({ fileIndex: tab.index, path: tab.path, text: tab.text })) };
     saving.value = true;
     guiApplying.value = true;
     guiRefreshWarning.value = "";
@@ -860,6 +864,7 @@ export const useEditorStore = defineStore("editor", () => {
   /** 保存指定文件，供文件 GUI 与通用 GUI 共用。 */
   async function saveFileTab(index: number): Promise<boolean> {
     if (saving.value) return false;
+    if (index === COMPARE_TAB_INDEX) return saveCompareDraft();
     const tab = getFileDraft(index);
     if (!tab || !tab.editable) return false;
     if (tab && tab.editable && hasGUIDirty(tab.index)) {
@@ -896,8 +901,19 @@ export const useEditorStore = defineStore("editor", () => {
     for (const index of indexes) {
       if (await saveTab(index)) saved += 1;
     }
+    if (await saveCompareDraft()) saved += 1;
     if (saved > 0) await useArchiveStore().refreshInfo();
     return saved;
+  }
+
+  async function saveCompareDraft(): Promise<boolean> {
+    if (!tabs.value.some(tab => tab.index === COMPARE_TAB_INDEX)) return false;
+    const diff = useArchiveDiffStore();
+    if (!diff.isDraftDirty) return false;
+    if (diff.merging || !await diff.mergeText(diff.draftPath, diff.draftText)) {
+      throw new Error("对比草稿尚未保存，请稍后重试");
+    }
+    return true;
   }
 
   /**
@@ -1160,7 +1176,7 @@ export const useEditorStore = defineStore("editor", () => {
     guiDrafts.value = remainingTabs.filter((tab) => !visibleTabs.has(tab));
     await Promise.all(
       remainingTabs
-        .filter((tab) => pathsToRefresh.has(normalize(tab.path)))
+        .filter((tab) => tab.index >= 0 && pathsToRefresh.has(normalize(tab.path)))
         .map(async (tab) => {
           const meta = await EditorService.GetFile(tab.index);
           if (!meta) return;
