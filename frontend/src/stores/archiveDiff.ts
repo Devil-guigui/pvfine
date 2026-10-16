@@ -555,14 +555,16 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
     return true;
   }
 
-  async function openFileDirect(node: ArchiveDiffNode) {
+  async function openFileDirect(node: ArchiveDiffNode, silent = false) {
     const id = status.value?.id;
     if (!id || node.isDir) return;
     activeNode.value = node;
     const token = ++fileEpoch;
     const sessionEpoch = epoch;
-    fileLoading.value = true;
-    file.value = null;
+    if (!silent) {
+      fileLoading.value = true;
+      file.value = null;
+    }
     fileError.value = "";
     try {
       const result = await ArchiveDiffService.FileDiff(id, node.path);
@@ -574,7 +576,11 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
       }
     } catch (err) {
       if (token === fileEpoch && sessionEpoch === epoch) fileError.value = errorMessage(err);
-    } finally { if (token === fileEpoch && sessionEpoch === epoch) fileLoading.value = false; }
+    } finally {
+      if (!silent && token === fileEpoch && sessionEpoch === epoch) {
+        fileLoading.value = false;
+      }
+    }
   }
 
   async function confirmDraftSaveAndSwitch(): Promise<void> {
@@ -628,7 +634,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
         await useEditorStore().refreshMergedFiles(res.mergedPaths);
         deselectPaths(res.mergedPaths);
         if (activeNode.value && res.mergedPaths.includes(activeNode.value.path)) {
-          await openFileDirect(activeNode.value);
+          await openFileDirect(activeNode.value, true);
         }
         await refreshCurrentView();
       }
@@ -648,7 +654,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
         await useEditorStore().refreshMergedFiles([path]);
         deselectPaths([path]);
         if (activeNode.value && activeNode.value.path === path) {
-          await openFileDirect(activeNode.value);
+          await openFileDirect(activeNode.value, true);
         }
         await refreshCurrentView();
         return true;
@@ -669,7 +675,7 @@ export const useArchiveDiffStore = defineStore("archiveDiff", () => {
       originalDraftText.value = text;
       draftText.value = text;
       if (activeNode.value && activeNode.value.path === path) {
-        await openFileDirect(activeNode.value);
+        await openFileDirect(activeNode.value, true);
       }
       await refreshCurrentView();
       return true;

@@ -516,12 +516,21 @@ function buildRightEditorExtensions(commonExtensions: any[]): any[] {
   ];
 }
 
-function initMergeView(): void {
+let currentInitializedPath = "";
+
+function initMergeView(preserveState = false): void {
+  let savedSnapshot: ViewportScrollSnapshot | null = null;
+  if (preserveState && mergeViewInstance) {
+    savedSnapshot = captureViewportScroll();
+  }
+
   destroyMergeView();
   if (!mergeHostRef.value || !props.file || !props.file.textAvailable) {
+    currentInitializedPath = "";
     return;
   }
 
+  currentInitializedPath = props.file.path;
   const baseDoc = normalizeText(diffStore.draftText || localText.value || "");
   const targetDoc = normalizeText(otherText.value || "");
   const commonExtensions = buildCommonEditorExtensions();
@@ -555,6 +564,27 @@ function initMergeView(): void {
   chunksCount.value = mergeViewInstance.chunks.length;
   activeChunkIndex.value = 0;
 
+  if (savedSnapshot) {
+    const docLenA = mergeViewInstance.a.state.doc.length;
+    const safeCursor = Math.min(savedSnapshot.prevCursor, docLenA);
+    mergeViewInstance.a.dispatch({
+      selection: { anchor: safeCursor },
+    });
+    suppressScrollIntoView = true;
+    restoreViewportScroll(savedSnapshot);
+
+    cancelRestoreRaf();
+    restoreRaf1 = requestAnimationFrame(() => {
+      restoreRaf1 = null;
+      if (savedSnapshot) restoreViewportScroll(savedSnapshot);
+      restoreRaf2 = requestAnimationFrame(() => {
+        restoreRaf2 = null;
+        if (savedSnapshot) restoreViewportScroll(savedSnapshot);
+        suppressScrollIntoView = false;
+      });
+    });
+  }
+
   void nextTick(() => {
     updateScrollbarMetrics();
     updateUndoRedoStatus();
@@ -564,10 +594,15 @@ function initMergeView(): void {
 async function handleSave(): Promise<void> {
   if (!props.file?.path || !diffStore.isDraftDirty) return;
   isSaving.value = true;
+  const snapshot = captureViewportScroll();
   try {
     const success = await diffStore.mergeText(props.file.path, diffStore.draftText);
     if (success) {
       message.success("修改已成功保存并同步到归档");
+      if (mergeViewInstance?.a) {
+        mergeViewInstance.a.focus();
+        restoreViewportScroll(snapshot);
+      }
     } else {
       message.error("保存修改失败");
     }
@@ -672,9 +707,34 @@ function handleGlobalKeydown(e: KeyboardEvent): void {
 
 watch(
   () => [props.file?.path, props.file?.beforeText, props.file?.afterText],
-  () => {
+  ([newPath]) => {
+    if (!newPath) {
+      currentInitializedPath = "";
+      destroyMergeView();
+      return;
+    }
+
+    const isSameFile = newPath === currentInitializedPath && !!mergeViewInstance;
+
+    if (isSameFile && mergeViewInstance) {
+      // 检查当前双栏编辑器中文档是否已经与目标数据完全一致
+      const curDocA = normalizeText(mergeViewInstance.a.state.doc.toString());
+      const curDocB = normalizeText(mergeViewInstance.b.state.doc.toString());
+      const targetDocA = normalizeText(diffStore.draftText || localText.value || "");
+      const targetDocB = normalizeText(otherText.value || "");
+
+      if (curDocA === targetDocA && curDocB === targetDocB) {
+        // 文档内容完全无变动（如合入后点击保存，编辑器文本即为保存后文本）：
+        // 彻底无需销毁重建 MergeView，滚动条与光标 100% 原位保持！
+        chunksCount.value = mergeViewInstance.chunks.length;
+        updateUndoRedoStatus();
+        updateScrollbarMetrics();
+        return;
+      }
+    }
+
     void nextTick(() => {
-      initMergeView();
+      initMergeView(isSameFile);
     });
   },
   { immediate: true }
