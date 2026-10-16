@@ -70,15 +70,14 @@ onMounted(() => {
 const handledClickEvents = new WeakSet<MouseEvent>();
 const directoryToggleKeys = new Set<string>();
 
-// 顶部归档配置栏折叠状态：比对成功后默认折叠收起，释放最大代码浏览高度
+// 顶部归档配置栏折叠状态：默认保持展开，绝不自动收起
 const isHeaderCollapsed = ref(false);
 
 watch(
-  () => [diff.status?.state, diff.tree.length] as const,
-  ([state, treeLen]) => {
-    if (state === "ready" && treeLen > 0) {
-      isHeaderCollapsed.value = true;
-    } else if (state !== "ready" || treeLen === 0) {
+  () => diff.status?.state,
+  (state) => {
+    // 当比对重置、中断或非就绪状态时，确保配置栏保持展开可见
+    if (state !== "ready") {
       isHeaderCollapsed.value = false;
     }
   }
@@ -86,6 +85,8 @@ watch(
 
 const oldPath = computed(() => (diff.reverse ? diff.status?.currentPath : diff.status?.otherPath));
 const newPath = computed(() => (diff.reverse ? diff.status?.otherPath : diff.status?.currentPath));
+const oldArchiveName = computed(() => archiveName(oldPath.value || ""));
+const newArchiveName = computed(() => archiveName(newPath.value || ""));
 
 const operationLabels: Record<string, string> = { add: "新增", modify: "变更", delete: "删除" };
 const operationMarks: Record<string, string> = { add: "A", modify: "M", delete: "D" };
@@ -138,7 +139,7 @@ async function runExport(scopes: string[], title: string) {
 }
 
 async function exportAllDiff() {
-  const title = `导出全部差异（${archiveName(oldPath.value || "")} → ${archiveName(newPath.value || "")}）`;
+  const title = `导出全部差异（${oldArchiveName.value} → ${newArchiveName.value}）`;
   await runExport([], title);
 }
 
@@ -360,8 +361,11 @@ function switchToListMode(mode: "tree" | "flat") {
       </div>
 
       <!-- 对比连接标识与操作 -->
-      <div class="header-vs-connector" title="归档差异对比">
-        <span class="vs-label">VS</span>
+      <div
+        class="header-vs-connector"
+        :title="diff.reverse ? '当前对比视角: 本地当前 → 对比目标（以本地为基准观察外部）' : '当前对比视角: 对比目标 → 本地当前（以目标为基准观察本地）'"
+      >
+        <span class="vs-label">{{ diff.reverse ? '◀ VS' : 'VS ▶' }}</span>
       </div>
 
       <!-- 对比目标展示与操作 -->
@@ -392,14 +396,18 @@ function switchToListMode(mode: "tree" | "flat") {
           {{ diff.otherPath ? '更换' : '浏览' }}
         </NButton>
 
-        <NButton
-          v-if="diff.otherPath"
-          size="small"
-          :disabled="!diff.status || diff.status.state !== 'ready'"
-          @click="diff.reverse = !diff.reverse"
-        >
-          切换方向
-        </NButton>
+        <NTooltip v-if="diff.otherPath" trigger="hover">
+          <template #trigger>
+            <NButton
+              size="small"
+              :disabled="!diff.status || diff.status.state !== 'ready'"
+              @click="diff.toggleReverse"
+            >
+              {{ diff.reverse ? '反向视角 (本地→目标)' : '正向视角 (目标→本地)' }}
+            </NButton>
+          </template>
+          {{ diff.reverse ? '当前以本地当前为基准，观察外部目标变更；点击切换' : '当前以对比目标为基准，观察本地当前变更；点击切换' }}
+        </NTooltip>
 
         <NButton
           v-if="diff.status"
@@ -459,10 +467,10 @@ function switchToListMode(mode: "tree" | "flat") {
     <div v-if="diff.status?.state === 'ready' && isHeaderCollapsed" class="compare-mini-summary-bar">
       <div class="mini-bar-left">
         <span class="mini-role-pill mini-role-pill--local">基准</span>
-        <span class="mini-filename">{{ archiveName(oldPath || '') }}</span>
+        <span class="mini-filename">{{ oldArchiveName }}</span>
         <span class="mini-vs">→</span>
         <span class="mini-role-pill mini-role-pill--target">目标</span>
-        <span class="mini-filename">{{ archiveName(newPath || '') }}</span>
+        <span class="mini-filename">{{ newArchiveName }}</span>
       </div>
       <button class="mini-expand-btn" @click="isHeaderCollapsed = false">
         <NIcon size="13"><ChevronDown20Regular /></NIcon>
@@ -706,11 +714,10 @@ function switchToListMode(mode: "tree" | "flat") {
         <NSpin v-if="diff.fileLoading" class="detail-loading" />
         <NAlert v-else-if="diff.fileError" type="error">{{ diff.fileError }}</NAlert>
         <template v-else-if="parsedFile">
-          <!-- 双栏 Live Merge 模式 -->
+          <!-- 双栏 Live Merge 模式（工作台物理侧恒定锚定） -->
           <SideBySideDiff
-            v-if="diff.viewMode === 'side-by-side' && parsedFile.textAvailable"
-            :file="parsedFile"
-            :reverse="diff.reverse"
+            v-if="diff.viewMode === 'side-by-side' && diff.file?.textAvailable"
+            :file="diff.file"
           />
 
           <!-- 单栏 Unified 模式 -->

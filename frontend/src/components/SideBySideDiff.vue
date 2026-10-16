@@ -13,6 +13,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { NButton, NIcon, NSpin, NTag, NTooltip, useMessage } from "naive-ui";
 import {
   ArrowDown20Regular,
+  ArrowRedo20Regular,
+  ArrowUndo20Regular,
   ArrowUp20Regular,
   CheckmarkCircle20Regular,
   Copy20Regular,
@@ -30,8 +32,8 @@ import {
   keymap,
   lineNumbers,
 } from "@codemirror/view";
-import { Compartment, EditorState } from "@codemirror/state";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { Compartment, EditorState, Transaction } from "@codemirror/state";
+import { defaultKeymap, history, historyKeymap, redo, redoDepth, undo, undoDepth } from "@codemirror/commands";
 import { MergeView } from "@codemirror/merge";
 import { ArchiveService } from "../../bindings/pvfine/services";
 import type { ArchiveDiffFile } from "../../bindings/pvfine/services/models";
@@ -39,6 +41,7 @@ import { useArchiveStore } from "../stores/archive";
 import { useArchiveDiffStore } from "../stores/archiveDiff";
 import { useEditorStore } from "../stores/editor";
 import { pvfHighlighting, pvfLanguage } from "../pvfLanguage";
+import { registerUndoHandler } from "../activeUndoBridge";
 
 const props = defineProps<{
   file: ArchiveDiffFile;
@@ -180,12 +183,16 @@ function copyPath(): void {
   message.success("已复制文件路径");
 }
 
-const localExists = computed(() => (props.reverse ? props.file?.beforeExists : props.file?.afterExists));
-const otherExists = computed(() => (props.reverse ? props.file?.afterExists : props.file?.beforeExists));
-const localSize = computed(() => (props.reverse ? props.file?.beforeSize ?? 0 : props.file?.afterSize ?? 0));
-const otherSize = computed(() => (props.reverse ? props.file?.afterSize ?? 0 : props.file?.beforeSize ?? 0));
-const localText = computed(() => (props.reverse ? props.file?.beforeText : props.file?.afterText));
-const otherText = computed(() => (props.reverse ? props.file?.afterText : props.file?.beforeText));
+// 方案 B（工作台物理侧锚定）：
+// 左栏物理位置恒定为本地当前工作区（先选中的归档，可编辑侧），对应后端原始 ArchiveDiffFile 的 after* 字段；
+// 右栏物理位置恒定为外部对比目标（后选中的归档，只读参考侧），对应后端原始 ArchiveDiffFile 的 before* 字段。
+// 无论全局对比视角如何切换，左右两栏的物理归属与可编辑权限永远恒定，彻底杜绝底稿取错侧覆盖本地内容。
+const localExists = computed(() => props.file?.afterExists ?? false);
+const otherExists = computed(() => props.file?.beforeExists ?? false);
+const localSize = computed(() => props.file?.afterSize ?? 0);
+const otherSize = computed(() => props.file?.beforeSize ?? 0);
+const localText = computed(() => props.file?.afterText ?? "");
+const otherText = computed(() => props.file?.beforeText ?? "");
 
 const canOpenInEditor = computed(() => {
   return archiveStore.open && !!localExists.value;
@@ -207,12 +214,169 @@ async function openInEditor(): Promise<void> {
   }
 }
 
+const canUndo = ref(false);
+const canRedo = ref(false);
+
+interface ViewportScrollSnapshot {
+  scrollTop: number;
+  scrollLeft: number;
+  leftScrollLeft: number;
+  rightScrollLeft: number;
+  prevCursor: number;
+  docLength: number;
+}
+
+let suppressScrollIntoView = false;
+let lastHistoryChangeStart: number | null = null;
+let restoreRaf1: number | null = null;
+let restoreRaf2: number | null = null;
+
+function cancelRestoreRaf(): void {
+  if (restoreRaf1 !== null) {
+    cancelAnimationFrame(restoreRaf1);
+    restoreRaf1 = null;
+  }
+  if (restoreRaf2 !== null) {
+    cancelAnimationFrame(restoreRaf2);
+    restoreRaf2 = null;
+  }
+}
+
+function captureViewportScroll(): ViewportScrollSnapshot {
+  const scroller = mergeViewInstance?.dom;
+  const viewA = mergeViewInstance?.a;
+  const viewB = mergeViewInstance?.b;
+  return {
+    scrollTop: scroller?.scrollTop ?? 0,
+    scrollLeft: scroller?.scrollLeft ?? 0,
+    leftScrollLeft: viewA?.scrollDOM?.scrollLeft ?? 0,
+    rightScrollLeft: viewB?.scrollDOM?.scrollLeft ?? 0,
+    prevCursor: viewA?.state.selection.main.head ?? 0,
+    docLength: viewA?.state.doc.length ?? 0,
+  };
+}
+
+function restoreViewportScroll(snapshot: ViewportScrollSnapshot): void {
+  const scroller = mergeViewInstance?.dom;
+  const viewA = mergeViewInstance?.a;
+  const viewB = mergeViewInstance?.b;
+  if (scroller) {
+    scroller.scrollTop = snapshot.scrollTop;
+    scroller.scrollLeft = snapshot.scrollLeft;
+  }
+  if (viewA?.scrollDOM) {
+    viewA.scrollDOM.scrollLeft = snapshot.leftScrollLeft;
+  }
+  if (viewB?.scrollDOM) {
+    viewB.scrollDOM.scrollLeft = snapshot.rightScrollLeft;
+  }
+  syncScrollbarsFromEditor();
+}
+
+function updateUndoRedoStatus(): void {
+  if (!mergeViewInstance?.a) {
+    canUndo.value = false;
+    canRedo.value = false;
+    return;
+  }
+  const state = mergeViewInstance.a.state;
+  canUndo.value = undoDepth(state) > 0;
+  canRedo.value = redoDepth(state) > 0;
+}
+
+function adjustCursorAfterHistoryAction(
+  viewA: EditorView,
+  snapshot: ViewportScrollSnapshot
+): void {
+  const currentCursor = viewA.state.selection.main.head;
+  const docLen = viewA.state.doc.length;
+
+  // 若撤销/重做后光标被重置到了 pos 0，而新文档非空：
+  // 智能修正光标位置，避免跳回文档首行
+  if (currentCursor === 0 && docLen > 0) {
+    if (lastHistoryChangeStart !== null && lastHistoryChangeStart > 0) {
+      const targetPos = Math.min(lastHistoryChangeStart, docLen);
+      viewA.dispatch({ selection: { anchor: targetPos } });
+    } else if (snapshot.prevCursor > 0 && snapshot.prevCursor <= docLen) {
+      viewA.dispatch({ selection: { anchor: snapshot.prevCursor } });
+    }
+  }
+}
+
+function executeHistoryAction(action: "undo" | "redo"): boolean {
+  if (!mergeViewInstance?.a) return false;
+  const viewA = mergeViewInstance.a;
+
+  const snapshot = captureViewportScroll();
+  suppressScrollIntoView = true;
+  lastHistoryChangeStart = null;
+
+  let success = false;
+  try {
+    success = action === "undo" ? undo(viewA) : redo(viewA);
+  } finally {
+    restoreViewportScroll(snapshot);
+  }
+
+  if (!success) {
+    suppressScrollIntoView = false;
+    return false;
+  }
+
+  adjustCursorAfterHistoryAction(viewA, snapshot);
+  viewA.focus();
+  updateUndoRedoStatus();
+
+  // MergeView 的 scheduleMeasure 会在 requestAnimationFrame 重排 spacer 占位块，
+  // 此处在连续两帧内重新校准滚动条位置，彻底杜绝回退后的视口跳变
+  cancelRestoreRaf();
+  restoreRaf1 = requestAnimationFrame(() => {
+    restoreRaf1 = null;
+    restoreViewportScroll(snapshot);
+    restoreRaf2 = requestAnimationFrame(() => {
+      restoreRaf2 = null;
+      restoreViewportScroll(snapshot);
+      suppressScrollIntoView = false;
+    });
+  });
+
+  return true;
+}
+
+function performUndo(): boolean {
+  return executeHistoryAction("undo");
+}
+
+function performRedo(): boolean {
+  return executeHistoryAction("redo");
+}
+
 function renderRevertControlElement(): HTMLElement {
   const btn = document.createElement("button");
   btn.className = "cm-revert-action-btn";
-  btn.title = "合入此段落到本地";
-  btn.setAttribute("aria-label", "合入此段落到本地");
+  btn.title = "合入此段落到本地当前工作区（可按 Ctrl+Z 撤销）";
+  btn.setAttribute("aria-label", "合入此段落到本地当前工作区");
   btn.textContent = "«";
+
+  // 在 mousedown 捕获阶段（先于 MergeView 自身的 revertClicked 冒泡监听器触发）：
+  // 提前将左栏编辑器的光标聚焦到该段落的起始位置。
+  // 这样 CodeMirror history 记录此合入事务时的 startSelection 就是该段落位置，
+  // 从而在后续按 Ctrl+Z 撤销时，原生选区能够准确恢复在该段落，绝不跳回 pos 0。
+  const prepareRevertSelection = () => {
+    if (!mergeViewInstance?.a) return;
+    const chunkIdx = Number(btn.dataset.chunk);
+    if (!isNaN(chunkIdx) && mergeViewInstance.chunks?.[chunkIdx]) {
+      const chunk = mergeViewInstance.chunks[chunkIdx];
+      const targetPos = Math.min(chunk.fromA, mergeViewInstance.a.state.doc.length);
+      mergeViewInstance.a.dispatch({
+        selection: { anchor: targetPos },
+      });
+      mergeViewInstance.a.focus();
+    }
+  };
+
+  btn.addEventListener("mousedown", prepareRevertSelection, true);
+  btn.addEventListener("click", prepareRevertSelection);
   return btn;
 }
 
@@ -244,11 +408,30 @@ function createEditorTheme() {
 }
 
 function handleEditorUpdate(update: ViewUpdate): void {
+  updateUndoRedoStatus();
   if (!update.docChanged) return;
   const newText = update.state.doc.toString();
   diffStore.updateDraftText(newText);
   if (mergeViewInstance) {
     chunksCount.value = mergeViewInstance.chunks.length;
+  }
+
+  const isUndoOrRedo = update.transactions.some(
+    (tr) => tr.isUserEvent("undo") || tr.isUserEvent("redo")
+  );
+  if (isUndoOrRedo) {
+    let firstChange: number | null = null;
+    update.changes.iterChanges((_fromA, _toA, fromB) => {
+      if (firstChange === null) {
+        firstChange = fromB;
+      }
+    });
+    lastHistoryChangeStart = firstChange;
+  }
+
+  const isRevert = update.transactions.some((tr) => tr.annotation(Transaction.userEvent) === "revert");
+  if (isRevert && mergeViewInstance?.a) {
+    mergeViewInstance.a.focus();
   }
 }
 
@@ -261,6 +444,78 @@ function destroyMergeView(): void {
   }
 }
 
+function buildCommonEditorExtensions(): any[] {
+  return [
+    lineNumbers(),
+    highlightActiveLineGutter(),
+    highlightActiveLine(),
+    drawSelection(),
+    history(),
+    pvfLanguage.extension,
+    pvfHighlighting,
+    createEditorTheme(),
+    keymap.of([...defaultKeymap, ...historyKeymap]),
+  ];
+}
+
+function buildLeftEditorExtensions(commonExtensions: any[]): any[] {
+  return [
+    ...commonExtensions,
+    wrappingCompA.of(diffStore.lineWrapping ? EditorView.lineWrapping : []),
+    EditorView.scrollHandler.of(() => {
+      if (suppressScrollIntoView) {
+        // 阻止 CodeMirror 撤销/重做期间的 scrollIntoView 粗暴重置统一视口垂直滚动条
+        return true;
+      }
+      return false;
+    }),
+    keymap.of([
+      {
+        key: "Mod-z",
+        run: () => performUndo(),
+        preventDefault: true,
+      },
+      {
+        key: "Mod-y",
+        run: () => performRedo(),
+        preventDefault: true,
+      },
+      {
+        key: "Mod-Shift-z",
+        run: () => performRedo(),
+        preventDefault: true,
+      },
+      {
+        key: "Mod-s",
+        run: () => {
+          void handleSave();
+          return true;
+        },
+      },
+    ]),
+    EditorView.updateListener.of((u) => {
+      handleEditorUpdate(u);
+      if (u.docChanged || u.geometryChanged) {
+        updateScrollbarMetrics();
+      }
+    }),
+  ];
+}
+
+function buildRightEditorExtensions(commonExtensions: any[]): any[] {
+  return [
+    ...commonExtensions,
+    wrappingCompB.of(diffStore.lineWrapping ? EditorView.lineWrapping : []),
+    EditorState.readOnly.of(true),
+    EditorView.editable.of(false),
+    EditorView.updateListener.of((u) => {
+      if (u.geometryChanged) {
+        updateScrollbarMetrics();
+      }
+    }),
+  ];
+}
+
 function initMergeView(): void {
   destroyMergeView();
   if (!mergeHostRef.value || !props.file || !props.file.textAvailable) {
@@ -269,56 +524,16 @@ function initMergeView(): void {
 
   const baseDoc = normalizeText(diffStore.draftText || localText.value || "");
   const targetDoc = normalizeText(otherText.value || "");
-  const themeExt = createEditorTheme();
-
-  const commonExtensions = [
-    lineNumbers(),
-    highlightActiveLineGutter(),
-    highlightActiveLine(),
-    drawSelection(),
-    history(),
-    pvfLanguage.extension,
-    pvfHighlighting,
-    themeExt,
-    keymap.of([...defaultKeymap, ...historyKeymap]),
-  ];
+  const commonExtensions = buildCommonEditorExtensions();
 
   mergeViewInstance = new MergeView({
     a: {
       doc: baseDoc,
-      extensions: [
-        ...commonExtensions,
-        wrappingCompA.of(diffStore.lineWrapping ? EditorView.lineWrapping : []),
-        keymap.of([
-          {
-            key: "Mod-s",
-            run: () => {
-              void handleSave();
-              return true;
-            },
-          },
-        ]),
-        EditorView.updateListener.of((u) => {
-          handleEditorUpdate(u);
-          if (u.docChanged || u.geometryChanged) {
-            updateScrollbarMetrics();
-          }
-        }),
-      ],
+      extensions: buildLeftEditorExtensions(commonExtensions),
     },
     b: {
       doc: targetDoc,
-      extensions: [
-        ...commonExtensions,
-        wrappingCompB.of(diffStore.lineWrapping ? EditorView.lineWrapping : []),
-        EditorState.readOnly.of(true),
-        EditorView.editable.of(false),
-        EditorView.updateListener.of((u) => {
-          if (u.geometryChanged) {
-            updateScrollbarMetrics();
-          }
-        }),
-      ],
+      extensions: buildRightEditorExtensions(commonExtensions),
     },
     parent: mergeHostRef.value,
     revertControls: "b-to-a",
@@ -342,6 +557,7 @@ function initMergeView(): void {
 
   void nextTick(() => {
     updateScrollbarMetrics();
+    updateUndoRedoStatus();
   });
 }
 
@@ -362,23 +578,28 @@ async function handleSave(): Promise<void> {
   }
 }
 
-async function handleMergeCurrentFile(): Promise<void> {
-  if (!props.file?.path) return;
-  isSaving.value = true;
-  try {
-    const success = await diffStore.mergeSingleFile(props.file.path);
-    if (success) {
-      message.success(`已成功合入 ${props.file.path}`);
-      await nextTick();
-      initMergeView();
-    } else {
-      message.error("合入文件失败");
-    }
-  } catch (err: any) {
-    message.error(`合入失败: ${err?.message ?? err}`);
-  } finally {
-    isSaving.value = false;
+function handleMergeCurrentFile(): void {
+  if (!mergeViewInstance || !props.file?.path) return;
+  const targetDoc = normalizeText(otherText.value || "");
+  const currentDoc = mergeViewInstance.a.state.doc.toString();
+  if (currentDoc === targetDoc) {
+    message.info("当前文件内容已与对比目标一致");
+    return;
   }
+
+  // 记录当前有效光标位置，避免全量合入时 selection 变为 0
+  const currentCursor = mergeViewInstance.a.state.selection.main.head;
+  const safeCursor = Math.min(currentCursor, targetDoc.length);
+
+  // 通过 CodeMirror dispatch 执行整文件替换，作为一条可撤销的历史记录记入 undo 栈
+  mergeViewInstance.a.dispatch({
+    changes: { from: 0, to: mergeViewInstance.a.state.doc.length, insert: targetDoc },
+    selection: { anchor: safeCursor },
+    userEvent: "revert",
+  });
+  mergeViewInstance.a.focus();
+  updateUndoRedoStatus();
+  message.success("已将对比目标内容全量合入到本地草稿（可按 Ctrl+Z 撤销，按 Ctrl+S 保存）");
 }
 
 function scrollToChunk(index: number): void {
@@ -401,16 +622,56 @@ function scrollToChunk(index: number): void {
 }
 
 function handleGlobalKeydown(e: KeyboardEvent): void {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+  if (!mergeViewInstance) return;
+
+  const isMod = e.ctrlKey || e.metaKey;
+  if (!isMod) return;
+
+  const code = e.code;
+  const key = e.key ? e.key.toLowerCase() : "";
+
+  // 避免在外部输入框（如搜索框）打字时误触发快捷键
+  const activeEl = document.activeElement as HTMLElement | null;
+  const isOtherInput = !!(
+    activeEl &&
+    (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.isContentEditable) &&
+    !mergeViewInstance.dom.contains(activeEl)
+  );
+  if (isOtherInput) return;
+
+  // 1. Ctrl+S 保存
+  if (code === "KeyS" || key === "s") {
+    e.preventDefault();
+    e.stopPropagation();
     if (diffStore.isDraftDirty) {
-      e.preventDefault();
       void handleSave();
     }
+    return;
+  }
+
+  // 2. Ctrl+Z 撤销 (或 Ctrl+Shift+Z 重做)
+  if (code === "KeyZ" || key === "z") {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey) {
+      performRedo();
+    } else {
+      performUndo();
+    }
+    return;
+  }
+
+  // 3. Ctrl+Y 重做
+  if ((code === "KeyY" || key === "y") && !e.shiftKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    performRedo();
+    return;
   }
 }
 
 watch(
-  () => [props.file?.path, props.file?.beforeText, props.file?.afterText, props.reverse],
+  () => [props.file?.path, props.file?.beforeText, props.file?.afterText],
   () => {
     void nextTick(() => {
       initMergeView();
@@ -419,8 +680,25 @@ watch(
   { immediate: true }
 );
 
+let unregisterUndoHandler: (() => void) | null = null;
+
 onMounted(() => {
-  window.addEventListener("keydown", handleGlobalKeydown);
+  unregisterUndoHandler = registerUndoHandler({
+    undo: () => performUndo(),
+    redo: () => performRedo(),
+    priority: 100,
+    isActive: () => {
+      if (!mergeViewInstance) return false;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const isOtherInput = !!(
+        activeEl &&
+        (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.isContentEditable) &&
+        !mergeViewInstance.dom.contains(activeEl)
+      );
+      return !isOtherInput;
+    },
+  });
+  window.addEventListener("keydown", handleGlobalKeydown, true);
   if (mergeHostRef.value && typeof ResizeObserver !== "undefined") {
     resizeObserver = new ResizeObserver(() => {
       updateScrollbarMetrics();
@@ -430,7 +708,12 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("keydown", handleGlobalKeydown);
+  cancelRestoreRaf();
+  if (unregisterUndoHandler) {
+    unregisterUndoHandler();
+    unregisterUndoHandler = null;
+  }
+  window.removeEventListener("keydown", handleGlobalKeydown, true);
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
@@ -443,9 +726,14 @@ onBeforeUnmount(() => {
   <div class="side-by-side-diff-container">
     <div class="side-diff-toolbar">
       <div class="toolbar-side toolbar-side--left">
-        <span class="column-badge column-badge--local" title="当前归档 (可编辑侧)">当前归档</span>
+        <span class="column-badge column-badge--local" title="本地当前工作区 (可编辑侧)">本地当前</span>
         <span class="file-path-text" :title="props.file.path">{{ props.file.path }}</span>
-        <span class="file-size-badge">{{ formatSize(localSize) }}</span>
+        <span
+          :class="['file-size-badge', { 'file-size-badge--missing': !localExists }]"
+          :title="localExists ? `文件大小: ${formatSize(localSize)}` : '本地当前工作区未包含该文件'"
+        >
+          {{ localExists ? formatSize(localSize) : '本地未包含' }}
+        </span>
 
         <div class="side-actions-group">
           <NTooltip v-if="canOpenInEditor" trigger="hover">
@@ -468,6 +756,36 @@ onBeforeUnmount(() => {
               </button>
             </template>
             复制文件路径
+          </NTooltip>
+        </div>
+
+        <div class="history-actions-group">
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <button
+                class="icon-tool-btn"
+                :disabled="!canUndo"
+                aria-label="撤销修改 (Ctrl+Z)"
+                @click="performUndo"
+              >
+                <NIcon size="13"><ArrowUndo20Regular /></NIcon>
+              </button>
+            </template>
+            撤销修改 (Ctrl+Z)
+          </NTooltip>
+
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <button
+                class="icon-tool-btn"
+                :disabled="!canRedo"
+                aria-label="重做修改 (Ctrl+Y / Ctrl+Shift+Z)"
+                @click="performRedo"
+              >
+                <NIcon size="13"><ArrowRedo20Regular /></NIcon>
+              </button>
+            </template>
+            重做修改 (Ctrl+Y / Ctrl+Shift+Z)
           </NTooltip>
         </div>
 
@@ -531,7 +849,7 @@ onBeforeUnmount(() => {
               <NIcon size="14"><DocumentArrowLeft20Regular /></NIcon>
             </button>
           </template>
-          以对比归档为准，将整个文件覆盖合并到本地
+          以对比目标为准，全量合入到本地草稿（可按 Ctrl+Z 撤销，Ctrl+S 保存）
         </NTooltip>
 
         <NTooltip trigger="hover">
@@ -551,9 +869,14 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="toolbar-side toolbar-side--right">
-        <span class="column-badge column-badge--target" title="对比归档 (只读侧)">对比归档</span>
+        <span class="column-badge column-badge--target" title="外部对比目标 (只读参考侧)">对比目标</span>
         <span class="file-path-text" :title="props.file.path">{{ props.file.path }}</span>
-        <span class="file-size-badge">{{ formatSize(otherSize) }}</span>
+        <span
+          :class="['file-size-badge', { 'file-size-badge--missing': !otherExists }]"
+          :title="otherExists ? `文件大小: ${formatSize(otherSize)}` : '外部对比目标未包含该文件'"
+        >
+          {{ otherExists ? formatSize(otherSize) : '目标未包含' }}
+        </span>
 
         <div class="side-actions-group">
           <NTooltip trigger="hover">
@@ -692,10 +1015,24 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.file-size-badge--missing {
+  color: var(--pvf-text-muted);
+  opacity: 0.75;
+  font-style: italic;
+}
+
 .side-actions-group {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.history-actions-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -836,10 +1173,15 @@ onBeforeUnmount(() => {
   transition: all 0.15s ease;
 }
 
-.icon-tool-btn:hover {
+.icon-tool-btn:hover:not(:disabled) {
   color: var(--pvf-text-primary);
   background: var(--pvf-surface-hover);
   border-color: var(--pvf-border-subtle);
+}
+
+.icon-tool-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .icon-tool-btn--save {

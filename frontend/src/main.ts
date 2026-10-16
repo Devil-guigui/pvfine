@@ -5,6 +5,10 @@ import ScriptWindow from "./ScriptWindow.vue";
 import "./style.css";
 import { applyTheme, getTheme } from "./theme";
 import { installLogging } from "./logging";
+import { installActiveUndoBridge } from "./activeUndoBridge";
+
+// 安装全局撤销/重做桥接（拦截 Wails 底层 execCommand('undo') 并精确分发给活跃编辑器）
+installActiveUndoBridge();
 
 // 主题设置从后端异步加载，先同步应用深色默认值，避免启动时闪白。
 applyTheme(getTheme("dark"));

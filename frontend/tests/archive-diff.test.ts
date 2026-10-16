@@ -157,3 +157,57 @@ test("根据关键字过滤后勾选目录仅选择匹配文件，绝不包含�
   expect(store.selectedPaths.size).toBe(0);
   expect(store.isDirSelected("equipment", 1)).toBe(false);
 });
+
+test("方案 B（物理侧锚定）：反向视角下 store.file 保持原始物理归属，可编辑草稿严格锚定本地当前内容", async () => {
+  const store = useArchiveDiffStore();
+  store.open();
+  store.otherPath = "other.pvf";
+  await store.refresh();
+
+  // 原始差异数据：本地（after）为 local_content，外部对比目标（before）为 target_content
+  const diffFile: ArchiveDiffFile = {
+    path: "test.equ",
+    operation: "modify",
+    beforeHash: "h1",
+    afterHash: "h2",
+    beforeType: 1,
+    afterType: 1,
+    beforeSize: 20,
+    afterSize: 30,
+    beforeExists: true,
+    afterExists: true,
+    beforeText: "target_content",
+    afterText: "local_content",
+    textAvailable: true,
+    message: "",
+  };
+  mocks.FileDiff.mockResolvedValue(diffFile);
+
+  await store.openFile({ path: "test.equ", name: "test.equ", isDir: false, operation: "modify", count: 1 });
+
+  // 1. 正向视角下：
+  expect(store.reverse).toBe(false);
+  expect(store.file?.afterText).toBe("local_content");
+  expect(store.file?.beforeText).toBe("target_content");
+  expect(store.draftText).toBe("local_content");
+
+  // 用户修改了草稿
+  store.updateDraftText("local_content_modified");
+  expect(store.isDraftDirty).toBe(true);
+
+  // 2. 切换为反向视角（方案 B）：
+  store.toggleReverse();
+  expect(store.reverse).toBe(true);
+
+  // 物理侧原始数据 store.file 绝对不被原地翻转修改（双栏编辑器消费此对象）
+  expect(store.file?.afterText).toBe("local_content");
+  expect(store.file?.beforeText).toBe("target_content");
+
+  // 草稿依然保留用户修改，绝不被目标归档覆盖
+  expect(store.draftText).toBe("local_content_modified");
+  expect(store.isDraftDirty).toBe(true);
+
+  // 仅供单栏差异和树形列表消费的 displayedFile 执行逻辑翻转
+  expect(store.displayedFile?.beforeText).toBe("local_content");
+  expect(store.displayedFile?.afterText).toBe("target_content");
+});
