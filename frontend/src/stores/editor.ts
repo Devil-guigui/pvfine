@@ -1,3 +1,4 @@
+import { assertMCPIdle } from "../mcpActivity";
 import { defineStore } from "pinia";
 import { computed, markRaw, nextTick, reactive, ref } from "vue";
 import { Events } from "@wailsio/runtime";
@@ -863,6 +864,7 @@ export const useEditorStore = defineStore("editor", () => {
 
   /** 保存指定文件，供文件 GUI 与通用 GUI 共用。 */
   async function saveFileTab(index: number): Promise<boolean> {
+    assertMCPIdle();
     if (saving.value) return false;
     if (index === COMPARE_TAB_INDEX) return saveCompareDraft();
     const tab = getFileDraft(index);
@@ -939,6 +941,7 @@ export const useEditorStore = defineStore("editor", () => {
 
   /** 保存到源文件 */
   async function save() {
+    assertMCPIdle();
     if (saving.value) throw new Error("正在保存，请稍后再试");
     const archive = useArchiveStore();
     const guiDirtyTab = allFiles.value.find((tab) => tab.editable && hasGUIDirty(tab.index));
@@ -970,6 +973,7 @@ export const useEditorStore = defineStore("editor", () => {
 
   /** 另存为新 PVF,返回保存路径(取消返回 null) */
   async function saveAs() {
+    assertMCPIdle();
     if (saving.value) throw new Error("正在保存，请稍后再试");
     const archive = useArchiveStore();
     const guiDirtyTab = allFiles.value.find((tab) => tab.editable && hasGUIDirty(tab.index));
@@ -986,10 +990,6 @@ export const useEditorStore = defineStore("editor", () => {
       const path = await EditorService.SaveAsDialog();
       if (path) {
         archiveSaveStage.value = "finishing";
-        for (const tab of allFiles.value) {
-          tab.original = tab.text;
-          tab.modified = false;
-        }
         await archive.refreshInfo();
       }
       return path || null;
@@ -1191,7 +1191,7 @@ export const useEditorStore = defineStore("editor", () => {
             // 归档整体重载:索引已失效,直接采用新内容。
             tab.text = meta.text;
             tab.original = meta.text;
-            tab.modified = false;
+            tab.modified = meta.modified;
           } else {
             tab.modified = meta.modified;
             // 本地有未保存编辑时保留编辑器内容,不被后端结果覆盖。
@@ -1205,6 +1205,11 @@ export const useEditorStore = defineStore("editor", () => {
       if (!emptyPane) break;
       closeSplit(emptyPane.id);
     }
+  }
+
+  /** Called only while the MCP preparation barrier holds and drafts are clean. */
+  async function syncMCPWorkspace(): Promise<void> {
+    await refreshAfterArchiveChange(allFiles.value.map(tab => tab.path), true);
   }
 
   async function refreshOpenTabTags(): Promise<void> {
@@ -1380,6 +1385,7 @@ export const useEditorStore = defineStore("editor", () => {
     refreshRenderedText,
     refreshBatchFiles,
     refreshAfterArchiveChange,
+    syncMCPWorkspace,
     refreshMergedFiles,
   };
 });

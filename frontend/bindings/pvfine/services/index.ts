@@ -14,6 +14,7 @@ import * as ExportService from "./exportservice.js";
 import * as FileGUIService from "./fileguiservice.js";
 import * as FileSetService from "./filesetservice.js";
 import * as ImageService from "./imageservice.js";
+import * as MCPService from "./mcpservice.js";
 import * as PreviewService from "./previewservice.js";
 import * as RenderingService from "./renderingservice.js";
 import * as RuleService from "./ruleservice.js";
@@ -36,6 +37,7 @@ export {
     FileGUIService,
     FileSetService,
     ImageService,
+    MCPService,
     PreviewService,
     RenderingService,
     RuleService,
@@ -107,6 +109,7 @@ export type {
     IndexHashTarget,
     IndexStatus,
     ListRegistrationTarget,
+    MCPStatus,
     PlaceholderRef,
     PreviewIssue,
     RecoveryInfo,

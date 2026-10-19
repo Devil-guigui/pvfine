@@ -677,6 +677,14 @@ export interface ListRegistrationTarget {
     "hasIndexHash": boolean;
 }
 
+export interface MCPStatus {
+    "enabled": boolean;
+    "port": number;
+    "endpoint": string;
+    "error"?: string;
+    "busy": boolean;
+}
+
 /**
  * PlaceholderRef identifies the string-table entry a placeholder annotation
  * resolves through, so the editor can offer to rewrite — or create — that text.
