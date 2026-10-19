@@ -402,7 +402,7 @@ function isCancel(e: any): boolean {
             导入
           </NButton>
         </template>
-        批量导入文件到归档根目录
+        导入文件或 Mod 到当前归档
       </NTooltip>
     </div>
 

@@ -691,6 +691,30 @@ export interface MCPStatus {
     "busy": boolean;
 }
 
+export interface ModImportFile {
+    "path": string;
+    "operation": string;
+    "overwrite": boolean;
+    "pairs": ModImportPair[] | null;
+}
+
+export interface ModImportPair {
+    "key": string;
+    "value": string;
+    "previous": string;
+    "overwrite": boolean;
+}
+
+export interface ModImportPreview {
+    "id": string;
+    "name": string;
+    "version": string;
+    "format": string;
+    "importedCount": number;
+    "overwrittenCount": number;
+    "files": ModImportFile[] | null;
+}
+
 /**
  * PlaceholderRef identifies the string-table entry a placeholder annotation
  * resolves through, so the editor can offer to rewrite — or create — that text.
