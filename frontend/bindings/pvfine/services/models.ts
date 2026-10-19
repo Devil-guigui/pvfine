@@ -298,6 +298,12 @@ export interface BookmarkGroup {
     "entries"?: BookmarkEntry[] | null;
 }
 
+export interface BuiltinSkill {
+    "id": string;
+    "title": string;
+    "description": string;
+}
+
 /**
  * CacheClearResult reports what one clear pass removed.
  */
@@ -1036,6 +1042,13 @@ export interface SkillEntry {
     "path": string;
     "name": string;
     "job": string;
+}
+
+export interface SkillInstallResult {
+    "id": string;
+    "path": string;
+    "status": string;
+    "message": string;
 }
 
 export interface SkillMode {

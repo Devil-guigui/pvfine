@@ -21,6 +21,7 @@ import * as RuleService from "./ruleservice.js";
 import * as ScriptService from "./scriptservice.js";
 import * as ScriptWindowService from "./scriptwindowservice.js";
 import * as SettingsService from "./settingsservice.js";
+import * as SkillService from "./skillservice.js";
 import * as UpdateService from "./updateservice.js";
 import * as VersionService from "./versionservice.js";
 export {
@@ -44,6 +45,7 @@ export {
     ScriptService,
     ScriptWindowService,
     SettingsService,
+    SkillService,
     UpdateService,
     VersionService
 };
@@ -76,6 +78,7 @@ export type {
     BookmarkDocument,
     BookmarkEntry,
     BookmarkGroup,
+    BuiltinSkill,
     CacheClearResult,
     CacheUsage,
     DropRateApplyRequest,
@@ -145,6 +148,7 @@ export type {
     ShopTab,
     SkillDocument,
     SkillEntry,
+    SkillInstallResult,
     SkillMode,
     SkillNumber,
     SkillProperty,

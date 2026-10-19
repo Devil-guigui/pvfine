@@ -5,6 +5,8 @@ import { Clipboard } from "@wailsio/runtime";
 import { MCPService } from "../../bindings/pvfine/services";
 import type { MCPStatus } from "../../bindings/pvfine/services/models";
 
+import BuiltinSkills from "./BuiltinSkills.vue";
+
 const message = useMessage();
 const status = ref<MCPStatus | null>(null);
 const port = ref(19245);
@@ -47,6 +49,7 @@ onMounted(refresh);
       <p>连接配置仅包含本机服务地址，无需鉴权。端口不变时，重启后可继续使用原配置。</p>
     </template>
     <p>AI 的修改先进入预览，应用后再保存 PVF。另存为仅生成副本，后续保存仍写原文件。归档编辑器有未提交草稿时，AI 操作会等待你先处理草稿。</p>
+    <BuiltinSkills />
   </section>
 </template>
 
