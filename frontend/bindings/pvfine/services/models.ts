@@ -1106,6 +1106,44 @@ export interface SkillPropertyBinding {
     "multiplier": number;
 }
 
+export interface SkillTreeBranch {
+    "job": string;
+    "name": string;
+    "nodes": SkillTreeNode[] | null;
+}
+
+export interface SkillTreeDocument {
+    "fileIndex": number;
+    "path": string;
+    "common": SkillTreeNode[] | null;
+    "branches": SkillTreeBranch[] | null;
+    "issues": string[] | null;
+}
+
+export interface SkillTreeNode {
+    "id": number;
+    "x": number;
+    "y": number;
+    "positionKind": string;
+    "position": number[] | null;
+    "next": number[] | null;
+    "name": string;
+    "explain": string;
+    "path": string;
+    "fileIndex": number;
+    "icon": ImageReference | null;
+    "requiredLevel": number | null;
+}
+
+/**
+ * SkillTreeRegistration retains the job token: skill IDs are local to this job.
+ */
+export interface SkillTreeRegistration {
+    "job": string;
+    "kind": string;
+    "path": string;
+}
+
 export interface StoredFileSet {
     "id": string;
     "name": string;

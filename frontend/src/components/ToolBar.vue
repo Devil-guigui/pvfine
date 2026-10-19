@@ -57,6 +57,8 @@ const message = useMessage();
 const dialog = useDialog();
 const hashRegistrationVisible = ref(false);
 const skillBrowserVisible = ref(false);
+const SkillTreeBrowser = defineAsyncComponent(() => import("./gui/SkillTreeBrowser.vue"));
+const skillTreeVisible = ref(false);
 
 function shortcutHint(command: ShortcutCommandId): string {
   const binding = effectiveBinding(command, settings.shortcutOverrides);
@@ -144,6 +146,7 @@ const toolOptions = computed(() => [
     disabled: !archive.open || archive.loading,
     icon: () => h(NIcon, null, { default: () => h(DocumentSync24Regular) }),
   },
+  { label: "技能树", key: "skill-tree", disabled: !archive.open, icon: () => h(NIcon, null, { default: () => h(Code24Regular) }) },
 ]);
 watch(
   () => archive.unpackMessage,
@@ -293,6 +296,10 @@ async function onToolSelect(key: string): Promise<void> {
     catch (err: any) { message.error(`打开强化/增幅概率失败: ${err?.message ?? err}`); }
     return;
   }
+  if (key === "skill-tree") {
+    skillTreeVisible.value = true;
+    return;
+  }
   if (key === "skills") {
     skillBrowserVisible.value = true;
     return;
@@ -324,6 +331,7 @@ function isCancel(e: any): boolean {
 </script>
 
 <template>
+  <SkillTreeBrowser v-if="skillTreeVisible" v-model:show="skillTreeVisible" />
   <SkillBrowser v-if="skillBrowserVisible" v-model:show="skillBrowserVisible" />
   <div class="toolbar" role="toolbar" aria-label="主工具栏">
     <div class="tb-group" role="group" aria-label="文件">
