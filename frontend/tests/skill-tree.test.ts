@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { skillTreeEdge, groupSkillTreeCells, skillTreeRowLevels } from "../src/gui/skillTree";
+import { skillTreeEdge, groupSkillTreeCells, skillTreeRowLevels, skillTreeCellNode } from "../src/gui/skillTree";
 import type { SkillTreeNode } from "../bindings/pvfine/services/models";
 const node = (x: number, y: number): SkillTreeNode => ({id: 1, x, y, name: "测试", explain: "", positionKind: "icon pos", position: [x, y], next: [], path: "", fileIndex: -1, icon: null, requiredLevel: null});
 describe("技能树连线", () => {
@@ -41,5 +41,15 @@ describe("技能树连线", () => {
   });
   it("TP 不产生等级标注", () => {
     expect(skillTreeRowLevels([{...node(0, 0), requiredLevel: 50}], "tp").size).toBe(0);
+  });
+});
+
+ describe("同位置技能默认显示", () => {
+  it("默认取文件中最后一个技能；记忆有效则恢复，技能已移除则回退到最后一个", () => {
+    const cell = {key: "0:0", nodes: [{...node(0, 0), id: 0}, {...node(0, 0), id: 112}, {...node(0, 0), id: 319}]};
+    expect(skillTreeCellNode(cell).id).toBe(319);
+    expect(skillTreeCellNode(cell, 0).id).toBe(0);
+    expect(skillTreeCellNode(cell, 112).id).toBe(112);
+    expect(skillTreeCellNode(cell, 999).id).toBe(319);
   });
 });

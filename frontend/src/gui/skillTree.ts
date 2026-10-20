@@ -60,3 +60,12 @@ export function skillTreeRowLevels(nodes: SkillTreeNode[], kind: string): Map<nu
   }
   return new Map([...first].map(([row, node]) => [row, node.requiredLevel]));
 }
+
+/** Prefer the last source entry unless this cell has a remembered selection. */
+export function skillTreeCellNode(cell: SkillTreeCell, rememberedID?: number): SkillTreeNode {
+  return cell.nodes.find(node => node.id === rememberedID) ?? cell.nodes[cell.nodes.length - 1]!;
+}
+
+export function skillTreeCellSelectionKey(path: string, job: string | null, kind: string, branch: string | null, cellKey: string): string {
+  return JSON.stringify([path.toLowerCase(), job, kind, branch, cellKey]);
+}

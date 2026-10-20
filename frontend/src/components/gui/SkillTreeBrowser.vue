@@ -2,12 +2,13 @@
 import { computed, onBeforeUnmount, ref, toRef, watch } from "vue";
 import { NButton, NEmpty, NModal, NSelect, NSlider, NSpin, useMessage } from "naive-ui";
 import { FileGUIService } from "../../../bindings/pvfine/services";
+import type { SkillTreeCell } from "../../gui/skillTree";
 import type { SkillTreeDocument, SkillTreeNode, SkillTreeRegistration } from "../../../bindings/pvfine/services/models";
 import ImageThumbnail from "../ImageThumbnail.vue";
 import { useFileGUIStore } from "../../stores/fileGUI";
 import { useEditorStore } from "../../stores/editor";
 import { skillJobNames } from "../../gui/skill";
-import { skillBranchNames, skillTreeEdge, groupSkillTreeCells, skillTreeRowLevels } from "../../gui/skillTree";
+import { skillBranchNames, skillTreeEdge, groupSkillTreeCells, skillTreeRowLevels, skillTreeCellNode, skillTreeCellSelectionKey } from "../../gui/skillTree";
 
 const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{ (e: "update:show", value: boolean): void }>();
@@ -32,8 +33,17 @@ const nodes = computed(() => doc.value?.branches?.find(b => b.name === branch.va
 const rowLevels = computed(() => skillTreeRowLevels(nodes.value, kind.value));
 const cells = computed(() => groupSkillTreeCells(nodes.value));
 const selectedCell = computed(() => cells.value.find(cell => cell.nodes.includes(selected.value!)));
-function cellNode(cell: { nodes: SkillTreeNode[] }) {
-  return selected.value && cell.nodes.includes(selected.value) ? selected.value : cell.nodes[0]!;
+function cellSelectionKey(cell: SkillTreeCell) {
+  return skillTreeCellSelectionKey(doc.value?.path ?? "", job.value, kind.value, branch.value, cell.key);
+}
+function cellNode(cell: SkillTreeCell) {
+  return skillTreeCellNode(cell, gui.skillTreeCellSelections[cellSelectionKey(cell)]);
+}
+function selectCellNode(node: SkillTreeNode) {
+  const cell = selectedCell.value;
+  if (!cell || !cell.nodes.includes(node)) return;
+  gui.skillTreeCellSelections[cellSelectionKey(cell)] = node.id;
+  selected.value = node;
 }
 const width = computed(() => Math.max(564, ...nodes.value.map(n => n.x + 47)));
 const height = computed(() => Math.max(268, ...nodes.value.map(n => n.y + 67)));
@@ -150,7 +160,7 @@ onBeforeUnmount(() => {request++;});
           <template v-if="selected">
             <div v-if="selectedCell && selectedCell.nodes.length > 1" class="overlap-picker">
               <div class="overlap-title">同位置技能（{{ selectedCell.nodes.length }}）</div>
-              <button v-for="(n, i) in selectedCell.nodes" :key="i" :class="{ active: selected === n }" :aria-pressed="selected === n" @click="selected = n"><span>#{{ n.id }}</span>{{ n.name }}</button>
+              <button v-for="(n, i) in selectedCell.nodes" :key="i" :class="{ active: selected === n }" :aria-pressed="selected === n" @click="selectCellNode(n)"><span>#{{ n.id }}</span>{{ n.name }}</button>
             </div>
             <div class="detail-title"><ImageThumbnail :reference="selected.icon" :size="48" show-fallback /><div><strong>{{ selected.name }}</strong><span>技能 #{{ selected.id }}</span></div></div>
             <p class="skill-explain">{{ selected.explain || '暂无技能描述' }}</p>
