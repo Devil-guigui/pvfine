@@ -18,19 +18,26 @@ export const skillBranchNames: Record<string, string> = {
 };
 
 // Use the edge facing the destination, keeping arrows outside the 32px icon.
-export function skillTreeEdge(source: SkillTreeNode, target: SkillTreeNode): string {
+export function skillTreeEdgeLayout(source: SkillTreeNode, target: SkillTreeNode): {path: string; end: {x: number; y: number}} {
   const sx = source.x + 16, sy = source.y + 16;
   const tx = target.x + 16, ty = target.y + 16;
+  if (source.x === target.x && source.y === target.y) {
+    return {path: `M ${source.x + 34} ${sy} H ${source.x + 44} V ${source.y - 10} H ${tx} V ${target.y - 3}`, end: {x: tx, y: target.y - 3}};
+  }
   if (Math.abs(tx - sx) > Math.abs(ty - sy)) {
     const direction = Math.sign(tx - sx);
     const start = sx + direction * 18, end = tx - direction * 20;
     const mid = (start + end) / 2;
-    return `M ${start} ${sy} H ${mid} V ${ty} H ${end}`;
+    return {path: `M ${start} ${sy} H ${mid} V ${ty} H ${end}`, end: {x: end, y: ty}};
   }
   const direction = Math.sign(ty - sy) || 1;
   const start = sy + direction * 24, end = ty - direction * 19;
   const mid = (start + end) / 2;
-  return `M ${sx} ${start} V ${mid} H ${tx} V ${end}`;
+  return {path: `M ${sx} ${start} V ${mid} H ${tx} V ${end}`, end: {x: tx, y: end}};
+}
+
+export function skillTreeEdge(source: SkillTreeNode, target: SkillTreeNode): string {
+  return skillTreeEdgeLayout(source, target).path;
 }
 
 export interface SkillTreeCell {
@@ -170,15 +177,14 @@ export function removeSkillTreeNode(text: string, branch: SkillTreeBranch, node:
 }
 
 function skillTreeRawOffset(text: string, offset: number): number {
-    if (!Number.isInteger(offset) || offset < 0) throw new Error("技能记录不完整，请先修正文本");
-    let raw = 0, unit = 0;
-    for (; unit < offset && raw < text.length; unit++, raw++) {
-      if (text[raw] === "\r" && text[raw + 1] === "\n") raw++;
-    }
-    if (unit !== offset) throw new Error("技能位置已变化，请重新读取");
-    return raw;
+  if (!Number.isInteger(offset) || offset < 0) throw new Error("技能记录不完整，请先修正文本");
+  let raw = 0, unit = 0;
+  for (; unit < offset && raw < text.length; unit++, raw++) {
+    if (text[raw] === "\r" && text[raw + 1] === "\n") raw++;
+  }
+  if (unit !== offset) throw new Error("技能位置已变化，请重新读取");
+  return raw;
 }
-
 
 /** Edit a single ordered successor. Index -1 appends; a null target removes it. */
 export function editSkillTreeLink(text: string, branch: SkillTreeBranch, node: SkillTreeNode, index: number, target: number | null): string {

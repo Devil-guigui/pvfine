@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { skillTreeEdge, groupSkillTreeCells, skillTreeRowLevels, skillTreeCellNode, skillTreeDropTarget, moveSkillTreeCell, skillTreeCanvasHeight, addSkillTreeNode, removeSkillTreeNode } from "../src/gui/skillTree";
+import { skillTreeEdge, skillTreeEdgeLayout, groupSkillTreeCells, skillTreeRowLevels, skillTreeCellNode, skillTreeDropTarget, moveSkillTreeCell, skillTreeCanvasHeight, addSkillTreeNode, removeSkillTreeNode, editSkillTreeLink } from "../src/gui/skillTree";
 import type { SkillTreeNode } from "../bindings/pvfine/services/models";
 const node = (x: number, y: number): SkillTreeNode => ({id: 1, sourceStart: 0, sourceClose: -1, nextTokens: [], positionTokens: [], x, y, name: "测试", explain: "", positionKind: "icon pos", position: [x, y], next: [], path: "", fileIndex: -1, icon: null, requiredLevel: null});
 describe("技能树连线", () => {
+  it("端点与实际路径一致，同位置关联绕开卡片，仍可选中编辑", () => {
+    expect(skillTreeEdgeLayout(node(0, 0), node(94, 0)).end).toEqual({x: 90, y: 16});
+    expect(skillTreeEdgeLayout(node(0, 0), node(0, 134)).end).toEqual({x: 16, y: 131});
+    expect(skillTreeEdgeLayout(node(47, 67), node(47, 67))).toEqual({path: "M 81 83 H 91 V 57 H 63 V 64", end: {x: 63, y: 64}});
+  });
   it("横向连线停在目标图标前，反向关系也保留箭头方向", () => {
     expect(skillTreeEdge(node(0, 0), node(94, 0))).toBe("M 34 16 H 62 V 16 H 90");
     expect(skillTreeEdge(node(94, 0), node(0, 0))).toBe("M 92 16 H 64 V 16 H 36");
@@ -155,5 +160,51 @@ describe("技能树连线", () => {
     expect(() => removeSkillTreeNode(fresh.text.replace("7 9 7", "6 9 7"), fresh.branch, fresh.a)).toThrow("关联记录已变化");
     fresh.b.nextTokens = [];
     expect(() => removeSkillTreeNode(fresh.text, fresh.branch, fresh.a)).toThrow("关联记录不完整");
+  });
+});
+
+ describe("技能树关联编辑", () => {
+  const fixture = () => {
+    const record = "[skill info]\n[index]\n1\n[cell pos]\n0 0\n[next skill]\n2 99 // 😀 顺序与注释保留\n[next skill]\n2\n[/skill info]";
+    const text = "// 😀\n[character job]\n`[swordman]` `none`\n" + record + "\n[/character job]\n";
+    const first = text.indexOf("2 99"), last = text.lastIndexOf("2\n");
+    const source = {...node(0, 0), sourceStart: text.indexOf("[skill info]"), sourceClose: text.indexOf("[/skill info]"), next: [2, 99, 2], nextTokens: [
+      {value: 2, start: first, end: first + 1, tokenType: 0},
+      {value: 99, start: first + 2, end: first + 4, tokenType: 0},
+      {value: 2, start: last, end: last + 1, tokenType: 0},
+    ]};
+    const branch = {job: "[swordman]", name: "none", insertOffset: -1, nodes: [source, {...node(47, 0), id: 2}, {...node(94, 0), id: 3}]};
+    return {text, source, branch};
+  };
+  it("修改和删除按条目索引定位，保留重复关联、失效目标、注释与CRLF", () => {
+    const {text, source, branch} = fixture();
+    expect(editSkillTreeLink(text, branch, source, 2, 3)).toBe(text.replace("[next skill]\n2\n", "[next skill]\n3\n"));
+    expect(editSkillTreeLink(text, branch, source, 1, null)).toBe(text.replace("2 99 //", "2  //"));
+    expect(editSkillTreeLink(text.replaceAll("\n", "\r\n"), branch, source, 0, 3)).toBe(text.replace("2 99 //", "3 99 //").replaceAll("\n", "\r\n"));
+  });
+  it("新增追加到技能记录末尾，保留现有关联的顺序", () => {
+    const {text, source, branch} = fixture();
+    expect(editSkillTreeLink(text, branch, source, -1, 3)).toBe(text.replace("[/skill info]", "\t[next skill]\n\t\t3\n[/skill info]"));
+    const empty = {...source, next: [], nextTokens: []};
+    const emptyBranch = {...branch, nodes: [empty, ...branch.nodes.slice(1)]};
+    const blankText = text.replace(/2 99/g, "    ").replace(/2\n/g, " \n");
+    expect(editSkillTreeLink(blankText, emptyBranch, empty, -1, 3)).toContain("\t[next skill]\n\t\t3\n[/skill info]");
+  });
+
+  it("没有 next skill 标签时可新增首条关联，且不改其他记录", () => {
+    const text = "[skill info][index]1[cell pos]0 0[/skill info]\n[skill info][index]2[cell pos]1 0[/skill info]";
+    const source = {...node(0, 0), sourceClose: text.indexOf("[/skill info]")};
+    const branch = {job: "[swordman]", name: "none", insertOffset: -1, nodes: [source, {...node(47, 0), id: 2}]};
+    expect(editSkillTreeLink(text, branch, source, -1, 2)).toBe(text.replace("0 0[/skill info]", "0 0\n\t[next skill]\n\t\t2\n[/skill info]"));
+  });
+  it("拒绝跨分支目标、自关联、重复新增、过期索引与过期文本", () => {
+    const {text, source, branch} = fixture();
+    expect(() => editSkillTreeLink(text, branch, source, -1, 2)).toThrow("已存在");
+    expect(() => editSkillTreeLink(text, branch, source, -1, 1)).toThrow("自身");
+    expect(() => editSkillTreeLink(text, branch, source, -1, 99)).toThrow("当前分支");
+    expect(() => editSkillTreeLink(text, branch, source, 3, null)).toThrow("位置已变化");
+    expect(() => editSkillTreeLink(text.replace("2 99", "3 99"), branch, source, 0, null)).toThrow("记录已变化");
+    source.sourceClose = -1;
+    expect(() => editSkillTreeLink(text, branch, source, -1, 3)).toThrow("不完整");
   });
 });
