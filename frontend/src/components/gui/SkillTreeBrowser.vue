@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, toRef, watch } from "vue";
-import { NButton, NEmpty, NModal, NSelect, NSlider, NSpin, useMessage } from "naive-ui";
+import { computed, onBeforeUnmount, ref, shallowRef, toRef, watch } from "vue";
+import { NButton, NDropdown, NEmpty, NModal, NSelect, NSlider, NSpin, useMessage } from "naive-ui";
 import { FileGUIService } from "../../../bindings/pvfine/services";
-import type { SkillTreeCell } from "../../gui/skillTree";
-import type { SkillTreeDocument, SkillTreeNode, SkillTreeRegistration } from "../../../bindings/pvfine/services/models";
+import type { SkillTreeCell, SkillTreeDropTarget } from "../../gui/skillTree";
+import type { SkillTreeDocument, SkillTreeNode, SkillTreeRegistration, SkillTreeSkill } from "../../../bindings/pvfine/services/models";
 import ImageThumbnail from "../ImageThumbnail.vue";
 import { useFileGUIStore } from "../../stores/fileGUI";
 import { useEditorStore } from "../../stores/editor";
 import { skillJobNames } from "../../gui/skill";
-import { skillBranchNames, skillTreeEdge, groupSkillTreeCells, skillTreeRowLevels, skillTreeCellNode, skillTreeCellSelectionKey } from "../../gui/skillTree";
+import { skillBranchNames, skillTreeEdge, groupSkillTreeCells, skillTreeRowLevels, skillTreeCellNode, skillTreeCellSelectionKey, skillTreeDropTarget, moveSkillTreeCell, skillTreeCanvasHeight, addSkillTreeNode, removeSkillTreeNode } from "../../gui/skillTree";
 
 const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{ (e: "update:show", value: boolean): void }>();
@@ -25,11 +25,36 @@ const loading = ref(false);
 const error = ref("");
 const zoom = ref(130);
 const opening = ref(false);
+const savingTree = ref(false);
+const canvas = ref<HTMLElement | null>(null);
+const nodeInsetX = (47 - 34) / 2, nodeInsetY = (67 - 56) / 2;
+const nodeMenu = ref<{show: boolean; x: number; y: number; node: SkillTreeNode | null}>({show: false, x: 0, y: 0, node: null});
+const deleteOptions = computed(() => [{key: "delete", label: "从技能树删除当前技能", disabled: !canEdit.value}]);
+const treeDraft = computed(() => doc.value ? editor.getFileDraft(doc.value.fileIndex) : undefined);
+const dirty = computed(() => !!treeDraft.value && editor.isTextDirty(treeDraft.value));
+const canEdit = computed(() => !!doc.value && !!treeDraft.value?.editable && treeDraft.value.text === doc.value.text && treeDraft.value.path.toLowerCase() === doc.value.path.toLowerCase() && !loading.value && !opening.value && !savingTree.value && !editor.saving && !editor.guiApplying);
+interface TreeDrag {
+  pointer: number; clientX: number; clientY: number; offsetX: number; offsetY: number;
+  cell: SkillTreeCell; node: SkillTreeNode; epoch: number; text: string; active: boolean;
+  target: SkillTreeDropTarget;
+}
+const drag = shallowRef<TreeDrag | null>(null);
+interface SkillAddition {
+  x: number; y: number; text: string; epoch: number; job: string; kind: string; branch: string;
+  path: string; loading: boolean; error: string; id: number | null; choices: SkillTreeSkill[];
+}
+const addition = ref<SkillAddition | null>(null);
+const adding = ref(false);
+const addOptions = computed(() => (addition.value?.choices ?? []).map(skill => ({value: skill.id, label: `${skill.name} #${skill.id}`})));
+
+let suppressClick = false;
+let reloadTimer: ReturnType<typeof setTimeout> | undefined;
 let request = 0;
 const jobOptions = computed(() => [...new Set(registrations.value.map(r => r.job))].map(value => ({value, label: skillJobNames[value.replace(/[\[\] ]/g, "")] || value})));
 const kinds = computed(() => registrations.value.filter(r => r.job === job.value).map(r => ({value: r.kind, label: r.kind === "sp" ? "SP · 技能" : "TP · 特性技能"})));
 const branches = computed(() => (doc.value?.branches ?? []).map(b => ({value: b.name, label: skillBranchNames[b.name] || b.name})));
-const nodes = computed(() => doc.value?.branches?.find(b => b.name === branch.value)?.nodes ?? []);
+const currentBranch = computed(() => doc.value?.branches?.find(b => b.name === branch.value));
+const nodes = computed(() => currentBranch.value?.nodes ?? []);
 const rowLevels = computed(() => skillTreeRowLevels(nodes.value, kind.value));
 const cells = computed(() => groupSkillTreeCells(nodes.value));
 const selectedCell = computed(() => cells.value.find(cell => cell.nodes.includes(selected.value!)));
@@ -46,7 +71,7 @@ function selectCellNode(node: SkillTreeNode) {
   selected.value = node;
 }
 const width = computed(() => Math.max(564, ...nodes.value.map(n => n.x + 47)));
-const height = computed(() => Math.max(268, ...nodes.value.map(n => n.y + 67)));
+const height = computed(() => skillTreeCanvasHeight(nodes.value));
 const rows = computed(() => Array.from({length: Math.ceil(height.value / 67)}, (_, i) => i));
 const edges = computed(() => {
   const byID = new Map(nodes.value.map(n => [n.id, n]));
@@ -60,6 +85,7 @@ function linked(n: SkillTreeNode) {
 }
 async function scan() {
   const id = ++request, epoch = gui.epoch;
+  nodeMenu.value.show = false;
   loading.value = true; error.value = ""; doc.value = null; selected.value = null;
   try {
     const result = await FileGUIService.ListSkillTrees();
@@ -71,15 +97,29 @@ async function scan() {
   } catch (e) {if (id === request) error.value = String(e);}
   finally {if (id === request) loading.value = false;}
 }
-async function load() {
+async function load(preserveView = false) {
   if (!props.show || !job.value) return;
   const id = ++request, epoch = gui.epoch;
-  loading.value = true; error.value = ""; doc.value = null; selected.value = null;
+  const selection = preserveView ? selected.value : null;
+  const commonSelected = !!selection && !!doc.value?.common?.includes(selection);
+  clearTimeout(reloadTimer);
+  nodeMenu.value.show = false;
+  loading.value = true; error.value = "";
+  // 更新当前树时保留画布 DOM，避免内容短暂清空使滚动位置被浏览器归零。
+  if (!preserveView) { doc.value = null; selected.value = null; }
   try {
-    const result = await FileGUIService.ReadSkillTree(job.value, kind.value);
+    let result = await FileGUIService.ReadSkillTree(job.value, kind.value);
+    if (id !== request || epoch !== gui.epoch || !result) return;
+    const draft = await editor.openGUIFile(result.fileIndex);
     if (id !== request || epoch !== gui.epoch) return;
+    if (draft.path.toLowerCase() !== result.path.toLowerCase()) throw new Error("技能树文件已变化，请重新读取");
+    const text = draft.text;
+    if (draft.editable && text !== result.text) result = await FileGUIService.ReadSkillTreeDraft(job.value, kind.value, text);
+    if (id !== request || epoch !== gui.epoch) return;
+    if (draft.editable && draft.text !== text) { void load(preserveView); return; }
     doc.value = result;
     if (!result?.branches?.some(b => b.name === branch.value)) branch.value = result?.branches?.[0]?.name ?? null;
+    if (selection) selected.value = (commonSelected ? result?.common : nodes.value)?.find(node => node.id === selection.id) ?? null;
   } catch (e) {if (id === request) error.value = String(e);}
   finally {if (id === request) loading.value = false;}
 }
@@ -112,20 +152,166 @@ async function openTreeSource(event: MouseEvent | KeyboardEvent) {
   } catch (e) {message.error(String(e));}
   finally {opening.value = false;}
 }
-watch(() => props.show, show => {if (show) void scan(); else request++;}, {immediate: true});
-watch(branch, () => {selected.value = null;});
-watch(() => gui.epoch, () => {request++; doc.value = null; registrations.value = []; loading.value = false; emit("update:show", false);});
-onBeforeUnmount(() => {request++;});
+function clickCell(cell: SkillTreeCell) {
+  if (suppressClick) { suppressClick = false; return; }
+  selected.value = cellNode(cell);
+}
+function openNodeMenu(event: MouseEvent, cell: SkillTreeCell) {
+  cancelDrag();
+  selected.value = cellNode(cell);
+  nodeMenu.value = {show: true, x: event.clientX, y: event.clientY, node: selected.value};
+}
+async function deleteNode(node: SkillTreeNode | null) {
+  nodeMenu.value.show = false;
+  if (!node || !canEdit.value || !currentBranch.value || !treeDraft.value || !selectedCell.value) return;
+  try {
+    const cell = selectedCell.value;
+    const text = removeSkillTreeNode(doc.value!.text, currentBranch.value, node);
+    const selectionKey = cellSelectionKey(cell);
+    if (gui.skillTreeCellSelections[selectionKey] === node.id) delete gui.skillTreeCellSelections[selectionKey];
+    editor.updateContent(treeDraft.value.index, text);
+    const epoch = gui.epoch;
+    await load(true);
+    if (epoch === gui.epoch) {
+      const remaining = cells.value.find(value => value.key === cell.key);
+      selected.value = remaining ? cellNode(remaining) : null;
+    }
+  } catch (e) { message.error(String(e)); }
+}
+function selectNodeMenu() {
+  const node = nodeMenu.value.node;
+  void deleteNode(node);
+}
+function cancelDrag() { drag.value = null; }
+function startDrag(event: PointerEvent, cell: SkillTreeCell) {
+  if (!canEdit.value || event.button !== 0 || event.metaKey || event.ctrlKey || !canvas.value) return;
+  const node = cellNode(cell);
+  const rect = canvas.value.getBoundingClientRect();
+  const scale = zoom.value / 100;
+  drag.value = {pointer: event.pointerId, clientX: event.clientX, clientY: event.clientY,
+    offsetX: (event.clientX - rect.left) / scale - node.x - 40 - nodeInsetX,
+    offsetY: (event.clientY - rect.top) / scale - node.y - nodeInsetY,
+    cell, node, epoch: gui.epoch, text: doc.value!.text, active: false,
+    target: {x: node.x, y: node.y, valid: true, reason: ""}};
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+}
+function moveDrag(event: PointerEvent) {
+  const current = drag.value;
+  if (!current || current.pointer !== event.pointerId || !canvas.value) return;
+  if (!canEdit.value || current.epoch !== gui.epoch || current.text !== doc.value?.text) { cancelDrag(); return; }
+  if (!current.active && Math.hypot(event.clientX - current.clientX, event.clientY - current.clientY) < 4) return;
+  event.preventDefault();
+  const rect = canvas.value.getBoundingClientRect();
+  const scale = zoom.value / 100;
+  const x = (event.clientX - rect.left) / scale - 40 - nodeInsetX - current.offsetX;
+  const y = (event.clientY - rect.top) / scale - nodeInsetY - current.offsetY;
+  drag.value = {...current, active: true, target: skillTreeDropTarget(nodes.value, current.cell, x, y, width.value, height.value)};
+}
+async function finishDrag(event: PointerEvent) {
+  moveDrag(event);
+  const current = drag.value;
+  if (!current || current.pointer !== event.pointerId) return;
+  cancelDrag();
+  if (!current.active) return;
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 0);
+  if (!current.target.valid) { message.warning(current.target.reason); return; }
+  if (current.target.x === current.node.x && current.target.y === current.node.y) return;
+  try {
+    const draft = treeDraft.value;
+    if (!canEdit.value || !draft || current.epoch !== gui.epoch || draft.text !== current.text) throw new Error("技能树已变化，拖拽已取消");
+    const text = moveSkillTreeCell(current.text, nodes.value, current.cell, current.target.x, current.target.y, width.value, height.value);
+    const remembered = gui.skillTreeCellSelections[cellSelectionKey(current.cell)];
+    const targetKey = `${current.target.x}:${current.target.y}`;
+    editor.updateContent(draft.index, text);
+    if (remembered !== undefined) {
+      gui.skillTreeCellSelections[skillTreeCellSelectionKey(doc.value!.path, job.value, kind.value, branch.value, targetKey)] = remembered;
+      delete gui.skillTreeCellSelections[cellSelectionKey(current.cell)];
+    }
+    await load(true);
+    if (current.epoch === gui.epoch) selected.value = nodes.value.find(node => node.id === current.node.id && node.x === current.target.x && node.y === current.target.y) ?? null;
+  } catch (e) {message.error(String(e));}
+}
+async function saveTree() {
+  const tree = doc.value;
+  if (!tree || !canEdit.value || !dirty.value) return;
+  const epoch = gui.epoch;
+  savingTree.value = true;
+  try {
+    const saved = await editor.saveFileTab(tree.fileIndex);
+    if (saved && epoch === gui.epoch) { await load(true); message.success("技能树已保存到工作区"); }
+  } catch (e) {if (epoch === gui.epoch) message.error(String(e));}
+  finally {savingTree.value = false;}
+}
+async function loadAddChoices(snapshot: SkillAddition) {
+  snapshot.loading = true; snapshot.error = "";
+  try {
+    const choices = await FileGUIService.ListSkillTreeSkills(snapshot.job);
+    if (addition.value !== snapshot || snapshot.epoch !== gui.epoch) return;
+    const existing = new Set(nodes.value.map(node => node.id));
+    snapshot.choices = (choices ?? []).filter(skill => !existing.has(skill.id));
+  } catch (e) { if (addition.value === snapshot) snapshot.error = String(e); }
+  finally { if (addition.value === snapshot) snapshot.loading = false; }
+}
+function clickBlank(event: MouseEvent) {
+  if (suppressClick) { suppressClick = false; return; }
+  if (!canEdit.value || drag.value || adding.value || !canvas.value || !currentBranch.value || !job.value || !branch.value) return;
+  if ((event.target as HTMLElement).closest("button, .drop-preview")) return;
+  const rect = canvas.value.getBoundingClientRect(), scale = zoom.value / 100;
+  const rawX = (event.clientX - rect.left) / scale - 40;
+  const rawY = (event.clientY - rect.top) / scale;
+  if (rawX < 0 || rawY < 0) return;
+  const x = Math.floor(rawX / 47) * 47, y = Math.floor(rawY / 67) * 67;
+  const target = skillTreeDropTarget(nodes.value, {key: "", nodes: []}, x, y, width.value, height.value);
+  if (!target.valid) return;
+  if (currentBranch.value.insertOffset < 0) { message.warning("分支缺少结束标签，请先修正文本"); return; }
+  addition.value = {x, y, text: doc.value!.text, epoch: gui.epoch, job: job.value, kind: kind.value,
+    branch: branch.value, path: doc.value!.path, loading: true, error: "", id: null, choices: []};
+  void loadAddChoices(addition.value);
+}
+async function confirmAdd() {
+  const snapshot = addition.value;
+  if (!snapshot || snapshot.id === null || snapshot.loading || adding.value) return;
+  try {
+    if (!canEdit.value || !currentBranch.value || snapshot.epoch !== gui.epoch || treeDraft.value?.text !== snapshot.text || doc.value?.path !== snapshot.path || job.value !== snapshot.job || kind.value !== snapshot.kind || branch.value !== snapshot.branch) throw new Error("技能树已变化，请重新选择空白位置");
+    if (!snapshot.choices.some(skill => skill.id === snapshot.id)) throw new Error("请选择当前职业的技能");
+    const text = addSkillTreeNode(snapshot.text, currentBranch.value, snapshot.id, snapshot.x, snapshot.y, width.value, height.value);
+    adding.value = true;
+    editor.updateContent(treeDraft.value!.index, text);
+    addition.value = null;
+    await load(true);
+    if (snapshot.epoch === gui.epoch) selected.value = nodes.value.find(node => node.id === snapshot.id && node.x === snapshot.x && node.y === snapshot.y) ?? null;
+  } catch (e) { message.error(String(e)); }
+  finally { adding.value = false; }
+}
+watch(() => treeDraft.value?.text, (text) => {
+  if (loading.value || !doc.value || !treeDraft.value?.editable || text === undefined || text === doc.value.text) return;
+  cancelDrag(); addition.value = null; clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => { if (props.show) void load(true); }, 80);
+});
+watch(() => props.show, show => {if (show) void scan(); else { nodeMenu.value.show = false; request++; cancelDrag(); addition.value = null; }}, {immediate: true});
+watch(branch, () => {nodeMenu.value.show = false; selected.value = null; cancelDrag(); addition.value = null;});
+watch(() => gui.epoch, () => {nodeMenu.value.show = false; addition.value = null; cancelDrag(); request++; doc.value = null; registrations.value = []; loading.value = false; emit("update:show", false);});
+onBeforeUnmount(() => {request++; cancelDrag(); addition.value = null; clearTimeout(reloadTimer);});
 </script>
 
 <template>
+  <NDropdown trigger="manual" :show="nodeMenu.show" :x="nodeMenu.x" :y="nodeMenu.y" :options="deleteOptions" @select="selectNodeMenu" @clickoutside="nodeMenu.show = false" />
+  <NModal v-if="addition" :show="true" preset="card" title="添加技能" style="width: 520px; max-width: 92vw" @update:show="value => { if (!value) addition = null; }">
+    <p>添加到第 {{ addition.x / 47 + 1 }} 列、第 {{ addition.y / 67 + 1 }} 行。请选择当前职业尚未加入此分支的技能。</p>
+    <NSelect v-model:value="addition.id" :options="addOptions" filterable clearable :loading="addition.loading" :disabled="addition.loading || adding" placeholder="搜索技能名或ID" aria-label="选择要添加的技能" />
+    <p v-if="addition.error" role="alert">{{ addition.error }} <NButton size="small" @click="loadAddChoices(addition!)">重试</NButton></p>
+    <p v-else-if="!addition.loading && !addOptions.length">没有可添加的技能。</p>
+    <template #footer><div class="add-actions"><NButton @click="addition = null">取消</NButton><NButton type="primary" :disabled="addition.id === null || addition.loading || adding" @click="confirmAdd">添加到技能树</NButton></div></template>
+  </NModal>
   <NModal :show="show" preset="card" title="技能树" style="width: 1450px; max-width: 96vw" :content-style="{ padding: '0' }" @update:show="emit('update:show', $event)">
     <div class="tree-toolbar">
-      <NSelect :value="job" :options="jobOptions" placeholder="选择职业" aria-label="职业" style="width: 200px" :disabled="loading" @update:value="changeJob" />
-      <NSelect v-model:value="branch" :options="branches" placeholder="选择转职" aria-label="转职" style="width: 180px" :disabled="loading" />
-      <div class="tree-kinds"><NButton v-for="k in kinds" :key="k.value" :type="kind === k.value ? 'primary' : 'default'" size="small" :disabled="loading" @click="kind = k.value; load()">{{ k.label }}</NButton></div>
-      <span class="readonly">只读</span>
-      <NButton size="small" :disabled="loading" @click="scan">重新读取</NButton>
+      <NSelect :value="job" :options="jobOptions" placeholder="选择职业" aria-label="职业" style="width: 200px" :disabled="loading || savingTree || !!drag" @update:value="changeJob" />
+      <NSelect v-model:value="branch" :options="branches" placeholder="选择转职" aria-label="转职" style="width: 180px" :disabled="loading || savingTree || !!drag" />
+      <div class="tree-kinds"><NButton v-for="k in kinds" :key="k.value" :type="kind === k.value ? 'primary' : 'default'" size="small" :disabled="loading || savingTree || !!drag" @click="kind = k.value; load()">{{ k.label }}</NButton></div>
+      <span class="readonly">{{ dirty ? '未保存' : canEdit ? '可拖拽调整位置' : '只读' }}</span>
+      <NButton size="small" :disabled="!canEdit || !dirty || !!drag" :loading="savingTree" @click="saveTree">保存到工作区</NButton>
+      <NButton size="small" :disabled="loading || savingTree || !!drag" @click="scan">重新读取</NButton>
     </div>
     <div v-if="error" class="tree-error" role="alert">{{ error }} <NButton size="small" @click="scan">重试</NButton></div>
     <NSpin :show="loading">
@@ -139,17 +325,18 @@ onBeforeUnmount(() => {request++;});
               </button>
               <span v-if="!doc.common?.length" class="muted">无通用技能</span>
             </section>
-            <div v-if="nodes.length" class="canvas-space" :style="{ width: `${(width + 40) * zoom / 100}px`, height: `${height * zoom / 100}px` }">
-              <div class="tree-canvas" :style="{ width: `${width + 40}px`, height: `${height}px`, transform: `scale(${zoom / 100})` }">
-                <div v-for="row in rows" :key="row" class="tree-row" :class="{ alternate: row % 2 === 0 }" :style="{ top: `${row * 67}px` }"><span v-if="kind === 'sp'">{{ rowLevels.get(row) }}</span></div>
-                <svg class="tree-edges" :width="width" :height="height" style="left: 40px" aria-label="技能后继关系">
+            <div v-if="currentBranch" class="canvas-space" :style="{ width: `${(width + 40) * zoom / 100}px`, height: `${height * zoom / 100}px` }">
+              <div ref="canvas" class="tree-canvas" @click="clickBlank" :class="{ dragging: drag?.active, editable: canEdit }" :style="{ width: `${width + 40}px`, height: `${height}px`, transform: `scale(${zoom / 100})` }">
+                <div v-for="row in rows" :key="row" class="tree-row" :class="{ alternate: row % 2 === 0 }" :style="{ top: `${row * 67}px` }"><span v-if="kind === 'sp'">{{ rowLevels.get(row) }}</span><span v-if="row === rows.length - 1 && canEdit" class="append-label">点击添加技能，或拖到此行新增一行</span></div>
+                <svg class="tree-edges" :width="width" :height="height" :style="{ left: `${40 + nodeInsetX}px`, top: `${nodeInsetY}px` }" aria-label="技能后继关系">
                   <defs><marker id="skill-tree-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 z" fill="context-stroke" /></marker></defs>
                   <path v-for="edge in edges" :key="edge.key" :d="edge.path" fill="none" :stroke="selected && (edge.source.id === selected.id || edge.target.id === selected.id) ? '#e8b65e' : '#87744f'" stroke-width="1.7" marker-end="url(#skill-tree-arrow)" />
                 </svg>
-                <button v-for="cell in cells" :key="cell.key" class="tree-node" :class="{ selected: cell.nodes.includes(selected!), linked: cell.nodes.some(linked) }" :style="{ left: `${cellNode(cell).x + 40}px`, top: `${cellNode(cell).y + 6}px` }" :title="cell.nodes.map(n => `${n.name} #${n.id}`).join('\n')" :aria-label="`${cellNode(cell).name}，技能 ${cellNode(cell).id}${cell.nodes.length > 1 ? `，同位置共 ${cell.nodes.length} 个技能` : ''}`" @click="selected = cellNode(cell)">
+                <button v-for="cell in cells" :key="cell.key" class="tree-node" :class="{ selected: cell.nodes.includes(selected!), linked: cell.nodes.some(linked), movable: canEdit, moving: drag?.active && drag.cell.key === cell.key }" :style="{ left: `${cellNode(cell).x + 40 + nodeInsetX}px`, top: `${cellNode(cell).y + nodeInsetY}px` }" :title="cell.nodes.map(n => `${n.name} #${n.id}`).join('\n')" :aria-label="`${cellNode(cell).name}，技能 ${cellNode(cell).id}${cell.nodes.length > 1 ? `，同位置共 ${cell.nodes.length} 个技能` : ''}`" @click="clickCell(cell)" @contextmenu.prevent.stop="openNodeMenu($event, cell)" @pointerdown="startDrag($event, cell)" @pointermove="moveDrag" @pointerup="finishDrag" @pointercancel="cancelDrag" @lostpointercapture="cancelDrag" @dragstart.prevent>
                   <ImageThumbnail :reference="cellNode(cell).icon" :size="32" show-fallback /><small><span>{{ cellNode(cell).name }}</span></small>
                   <span v-if="cell.nodes.length > 1" class="overlap-count">{{ cell.nodes.length }}</span>
                 </button>
+                <div v-if="drag?.active" class="drop-preview" :class="{ invalid: !drag.target.valid }" :style="{ left: `${drag.target.x + 40 + nodeInsetX}px`, top: `${drag.target.y + nodeInsetY}px` }" aria-hidden="true"><ImageThumbnail :reference="drag.node.icon" :size="32" show-fallback /></div>
               </div>
             </div>
             <NEmpty v-else description="当前分支未配置技能" class="tree-empty" />
@@ -165,18 +352,20 @@ onBeforeUnmount(() => {request++;});
             <div class="detail-title"><ImageThumbnail :reference="selected.icon" :size="48" show-fallback /><div><strong>{{ selected.name }}</strong><span>技能 #{{ selected.id }}</span></div></div>
             <p class="skill-explain">{{ selected.explain || '暂无技能描述' }}</p>
             <NButton block :disabled="selected.fileIndex < 0 || opening || editor.saving" :loading="opening" @click="openSkill">打开技能文件</NButton>
+            <NButton v-if="selectedCell" class="delete-skill" block type="error" secondary :disabled="!canEdit || !!drag" @click="deleteNode(selected)">从技能树删除当前技能</NButton>
           </template>
           <NEmpty v-else description="点击技能查看详情与关联" />
-          <div class="tree-notes"><p><template v-if="kind === 'sp'">左侧数字为该行最左侧技能的学习等级。</template>箭头表示文件定义的后继关系。</p><p>图标需在设置中配置对应客户端的 NPK 资源。</p></div>
+          <div class="tree-notes"><p><template v-if="kind === 'sp'">左侧数字为该行最左侧技能的学习等级。</template>箭头表示文件定义的后继关系。</p><p>点击空白网格可添加当前职业的技能，右键或通过信息面板可删除当前技能。拖拽同位置技能会整组移动，绿色框表示可放置；修改后保存到工作区。图标需配置对应客户端的 NPK 资源。</p></div>
           <details v-if="doc?.issues?.length" class="tree-issues"><summary>数据提示（{{ doc.issues.length }}）</summary><p v-for="(issue, i) in doc.issues" :key="i">{{ issue }}</p></details>
         </aside>
       </div>
     </NSpin>
-    <footer class="tree-footer"><button class="source-path" :disabled="!doc || opening || editor.saving" title="Cmd / Ctrl + 单击，在编辑器打开技能树文件" @click="openTreeSource" @keydown.enter="openTreeSource">{{ doc?.path || '从当前 PVF 读取' }}</button><span>{{ nodes.length }} 个技能 · {{ edges.length }} 条连线</span><label>缩放 {{ zoom }}%</label><NSlider v-model:value="zoom" :min="80" :max="240" :step="10" style="width: 110px" aria-label="画布缩放" /></footer>
+    <footer class="tree-footer"><button class="source-path" :disabled="!doc || opening || editor.saving" title="Cmd / Ctrl + 单击，在编辑器打开技能树文件" @click="openTreeSource" @keydown.enter="openTreeSource">{{ doc?.path || '从当前 PVF 读取' }}</button><span v-if="drag?.active" role="status">{{ drag.target.valid ? `放置到 ${drag.target.x / 47}, ${drag.target.y / 67}` : drag.target.reason }}</span><span>{{ nodes.length }} 个技能 · {{ edges.length }} 条连线</span><label>缩放 {{ zoom }}%</label><NSlider v-model:value="zoom" :disabled="!!drag || loading || savingTree" :min="80" :max="240" :step="10" style="width: 110px" aria-label="画布缩放" /></footer>
   </NModal>
 </template>
 
 <style scoped>
+.add-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .tree-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 18px; border-bottom: 1px solid var(--pvf-border-subtle); }
 .tree-kinds { display: flex; gap: 6px; } .readonly { margin-left: auto; color: var(--pvf-text-secondary); font-size: 12px; }
 .tree-layout { display: grid; grid-template-columns: minmax(0, 1fr) 270px; height: min(72vh, 900px); min-height: 300px; }
@@ -188,9 +377,14 @@ onBeforeUnmount(() => {request++;});
 .canvas-space { position: relative; margin-top: 14px; }
 .tree-canvas { position: relative; transform-origin: top left; }
 .tree-row { position: absolute; width: 100%; height: 67px; color: #9b967e; font-size: 10px; }
-.tree-row.alternate { background: #202428; } .tree-row > span { position: absolute; top: 18px; left: 12px; }
+.tree-row.alternate { background-color: #202428; } .tree-row > span { position: absolute; top: 18px; left: 12px; }
+.tree-row .append-label { left: 40px; right: 0; top: 0; height: 67px; display: flex; align-items: center; justify-content: center; color: #818577; font-size: 10px; pointer-events: none; border-top: 1px dashed #ffffff1a; }
 .tree-edges { position: absolute; top: 6px; pointer-events: none; }
-.tree-node { position: absolute; width: 34px; height: 56px; display: flex; flex-direction: column; align-items: center; padding: 0; border: 1px solid #666356; border-radius: 2px; background: #12171b; color: #c2bca9; cursor: pointer; }
+.tree-node { box-sizing: border-box; position: absolute; width: 34px; height: 56px; display: flex; flex-direction: column; align-items: center; padding: 0; border: 1px solid #666356; border-radius: 2px; background: #12171b; color: #c2bca9; cursor: pointer; }
+.tree-node.movable { cursor: grab; touch-action: none; user-select: none; } .tree-node.moving { opacity: .35; cursor: grabbing; }
+.tree-canvas.editable .tree-row { background-image: linear-gradient(to right, #ffffff0d 1px, transparent 1px); background-size: 47px 67px; background-position: 40px 0; cursor: crosshair; }
+.tree-canvas.dragging { background-image: linear-gradient(to right, #ffffff14 1px, transparent 1px), linear-gradient(to bottom, #ffffff14 1px, transparent 1px); background-size: 47px 67px; background-position: 40px 0; }
+.drop-preview { position: absolute; width: 34px; height: 56px; box-sizing: border-box; border: 2px solid #78cfa0; background: #183a2cbb; z-index: 4; pointer-events: none; } .drop-preview.invalid { border-color: #e06c75; background: #592c34bb; }
 .overlap-count { position: absolute; right: -6px; top: -7px; min-width: 13px; height: 13px; padding: 0 2px; box-sizing: border-box; border-radius: 7px; background: #d4ad63; color: #211e18; font-size: 9px; line-height: 13px; font-weight: 700; }
 .overlap-picker { margin-bottom: 20px; } .overlap-title { margin-bottom: 8px; font-size: 12px; color: var(--pvf-text-secondary); }
 .overlap-picker button { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 8px; background: transparent; border: 1px solid var(--pvf-border-subtle); color: var(--pvf-text-primary); text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
@@ -202,6 +396,7 @@ button:focus-visible { outline: 2px solid #f1c779; outline-offset: 3px; }
 .tree-detail { overflow: auto; border-left: 1px solid var(--pvf-border-subtle); padding: 22px 16px; }
 .detail-title { display: flex; align-items: center; gap: 12px; } .detail-title > div { display: flex; flex-direction: column; gap: 6px; } .detail-title span { font-size: 12px; color: var(--pvf-text-secondary); }
 .skill-explain { margin: 22px 0; font-size: 13px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.delete-skill { margin-top: 12px; }
 .tree-notes { margin-top: 28px; color: var(--pvf-text-secondary); font-size: 12px; line-height: 1.7; } .tree-issues { font-size: 12px; overflow-wrap: anywhere; } .tree-issues summary { cursor: pointer; color: #ba9450; }
 .tree-footer { display: flex; align-items: center; gap: 16px; padding: 10px 18px; border-top: 1px solid var(--pvf-border-subtle); color: var(--pvf-text-secondary); font-size: 12px; } .source-path { flex: 1; min-width: 0; overflow-wrap: anywhere; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; user-select: text; }
 .source-path:hover:not(:disabled) { text-decoration: underline; }

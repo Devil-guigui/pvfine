@@ -162,6 +162,7 @@ export type {
     SkillTreeDocument,
     SkillTreeNode,
     SkillTreeRegistration,
+    SkillTreeSkill,
     StoredFileSet,
     StoredFileSetEntry,
     StructuredOperation,
