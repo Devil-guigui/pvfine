@@ -8,6 +8,7 @@ import { useEditorStore } from '../../stores/editor';
 import { useFileGUIStore } from '../../stores/fileGUI';
 import ItemCreateDialog from './ItemCreateDialog.vue';
 import ItemBoosterEditor from './ItemBoosterEditor.vue';
+import ItemSkillEffectsEditor from './ItemSkillEffectsEditor.vue';
 import EquipmentPreview from '../previews/EquipmentPreview.vue';
 
 const props = defineProps<{ file: GUIFile; active: boolean; paneId?: string }>();
@@ -21,18 +22,18 @@ const parsed = computed(() => {
 const groups = computed(() => itemGroups.map(group => ({ ...group, fields: group.fields.filter(f => (!f.equ || equipment.value) && (!f.stk || !equipment.value)) })).filter(g => g.fields.length));
 const disabled = computed(() => !props.active || !props.file.editable || editor.saving || editor.guiApplying || !!parsed.value.error);
 const dirty = computed(() => { const draft = editor.getFileDraft(props.file.index); return !!draft && editor.isTextDirty(draft); });
-const createShow = ref(false), boosterPending = ref(false);
+const createShow = ref(false), boosterPending = ref(false), skillPending = ref(false);
 const edit = reactive({ show: false, field: null as ItemField | null, values: [] as string[], source: '', epoch: 0 });
 const pending = computed(() => edit.show && edit.values.some((v, i) => v !== (itemSection(parsed.value.sections, edit.field?.name ?? '')?.tokens[i]?.value ?? '')));
 let unregister: (() => void) | undefined;
 let unregisterGuard: (() => void) | undefined;
-watch(() => [props.file.index, props.paneId] as const, () => {
+watch(() => JSON.stringify([props.file.index, props.paneId]), () => {
   unregister?.();
   unregisterGuard?.();
   unregister = editor.registerGUIDirtyChecker(props.file.index, () => pending.value || createShow.value);
   if (props.paneId) {
     unregisterGuard = editor.getGUIModes(props.paneId).registerGuard(props.file.index, () => {
-      if (edit.show || createShow.value || boosterPending.value) { message.warning('请先应用或取消物品字段编辑'); return false; }
+      if (edit.show || createShow.value || boosterPending.value || skillPending.value) { message.warning('请先应用或取消物品字段编辑'); return false; }
       return true;
     });
   }
@@ -63,11 +64,11 @@ function apply() {
   } catch (e) { message.error(String(e)); }
 }
 async function save() {
-  if (disabled.value || edit.show || createShow.value || boosterPending.value || !dirty.value) return;
+  if (disabled.value || edit.show || createShow.value || boosterPending.value || skillPending.value || !dirty.value) return;
   try { if (await editor.saveFileTab(props.file.index)) message.success('已保存物品到工作区'); }
   catch (e) { message.error(`保存物品失败：${String(e)}`); }
 }
-watch(() => [props.file.index, props.file.path, gui.epoch], () => { edit.show = false; });
+watch(() => JSON.stringify([props.file.index, props.file.path, gui.epoch]), () => { edit.show = false; });
 async function openCreated(index: number) {
   try { await editor.openFile(index, props.paneId); editor.setGUIMode(index, 'gui', props.paneId); }
   catch (e) { message.warning(`物品已创建，打开文件失败：${String(e)}`); }
@@ -91,7 +92,7 @@ function resize(count: number) { edit.values = Array.from({ length: count }, (_,
         <div class="title"><h2>{{ display(titleField) === '未配置' ? '物品编辑器' : display(titleField) }}</h2><NTag size="small">{{ equipment ? '装备' : '道具' }}</NTag><NTag v-if="dirty" size="small" type="warning">未保存</NTag><NTag v-if="!file.editable" size="small">只读</NTag></div>
         <div class="path">{{ file.path }}</div>
       </div>
-      <div class="actions"><NButton :disabled="disabled || edit.show || boosterPending" @click="createShow = true">新建物品</NButton><NButton @click="emit('close')">查看 DSL</NButton><NButton type="primary" :loading="editor.saving" :disabled="disabled || !dirty || edit.show || createShow || boosterPending" @click="save">保存物品</NButton></div>
+      <div class="actions"><NButton :disabled="disabled || edit.show || boosterPending || skillPending" @click="createShow = true">新建物品</NButton><NButton @click="emit('close')">查看 DSL</NButton><NButton type="primary" :loading="editor.saving" :disabled="disabled || !dirty || edit.show || createShow || boosterPending || skillPending" @click="save">保存物品</NButton></div>
     </header>
     <NAlert v-if="parsed.error" type="error" title="无法解析物品">{{ parsed.error }}</NAlert>
     <div v-else class="item-layout" :class="{ 'with-preview': equipment }">
@@ -100,7 +101,7 @@ function resize(count: number) { edit.values = Array.from({ length: count }, (_,
           <h3>{{ group.label }}</h3>
           <div class="field-grid">
             <div v-for="field in group.fields" :key="field.name" class="field" :class="{ wide: field.multiline }">
-              <div class="field-label"><span>{{ field.label }}</span><NButton size="tiny" secondary :aria-label="`编辑${field.label}`" :disabled="disabled || !!itemFieldIssue(parsed.sections, field)" @click="open(field)">{{ itemSection(parsed.sections, field.name) ? '编辑' : '添加' }}</NButton></div>
+              <div class="field-label"><span>{{ field.label }}</span><NButton size="tiny" secondary :aria-label="`编辑${field.label}`" :disabled="disabled || boosterPending || skillPending || !!itemFieldIssue(parsed.sections, field)" @click="open(field)">{{ itemSection(parsed.sections, field.name) ? '编辑' : '添加' }}</NButton></div>
               <div class="field-value" :class="{ empty: !itemSection(parsed.sections, field.name) }">{{ display(field) }}</div>
               <code>[{{ field.name }}]</code>
               <small v-if="itemFieldIssue(parsed.sections, field)">{{ itemFieldIssue(parsed.sections, field) }}</small>
@@ -108,6 +109,7 @@ function resize(count: number) { edit.values = Array.from({ length: count }, (_,
           </div>
         </section>
         <ItemBoosterEditor v-if="!equipment" :file="file" :active="active" @pending="boosterPending = $event" />
+        <ItemSkillEffectsEditor v-if="equipment" :file="file" :active="active" :busy="edit.show || createShow" @pending="skillPending = $event" />
       </div>
       <aside v-if="equipment" class="preview"><h3>装备预览</h3><EquipmentPreview :file="file" :active="active" /></aside>
     </div>
