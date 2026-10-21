@@ -7,18 +7,18 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 type mcpImportRow struct {
-	Key           string           `json:"key"`
-	SourcePath    string           `json:"sourcePath"`
-	TargetPath    string           `json:"targetPath"`
-	Overwrite     bool             `json:"overwrite"`
-	Size          int              `json:"size"`
-	DataType      int32            `json:"dataType"`
-	Diff          []*BatchDiffLine `json:"diff,omitempty"`
-	DiffTruncated bool             `json:"diffTruncated,omitempty"`
+	Key            string           `json:"key"`
+	SourcePath     string           `json:"sourcePath"`
+	TargetPath     string           `json:"targetPath"`
+	Overwrite      bool             `json:"overwrite"`
+	Size           int              `json:"size"`
+	DataType       int32            `json:"dataType"`
+	Diff           []*BatchDiffLine `json:"diff,omitempty"`
+	DiffTruncated  bool             `json:"diffTruncated,omitempty"`
+	SourceEncoding string           `json:"sourceEncoding,omitempty"`
 }
 type mcpImportPlan struct {
 	id           string
@@ -112,7 +112,7 @@ func (s *MCPService) importPrepare(a mcpArgs) (any, error) {
 	}
 	for _, f := range files {
 		i, exists := s.c.archive.Find(f.targetPath)
-		row := mcpImportRow{Key: f.targetPath, SourcePath: f.sourcePath, TargetPath: f.targetPath, Overwrite: exists, Size: len(f.data), DataType: f.dataType}
+		row := mcpImportRow{Key: f.targetPath, SourcePath: f.sourcePath, TargetPath: f.targetPath, Overwrite: exists, Size: len(f.data), DataType: f.dataType, SourceEncoding: f.sourceEncoding}
 		if mode == ImportModeText {
 			before := ""
 			if exists {
@@ -255,10 +255,9 @@ func readMCPImportFiles(files []importFile, mode string) error {
 		file.data = data
 		file.dataType = importDataType(file.targetPath)
 		if mode == ImportModeText {
-			if !utf8.Valid(data) {
-				return fmt.Errorf("INVALID_ENCODING: text 导入需要 UTF-8")
+			if err := file.decodeText(); err != nil {
+				return fmt.Errorf("INVALID_ENCODING: %w", err)
 			}
-			file.text = strings.TrimPrefix(string(data), "\uFEFF")
 		}
 	}
 	return nil

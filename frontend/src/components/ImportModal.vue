@@ -180,7 +180,8 @@ function renderTreeLabel({ option }: { option: TreeOption }): VNodeChild {
   const status = entry.overwrite ? "覆盖" : "新增";
   const icon = entry.overwrite ? DocumentEdit24Regular : DocumentAdd24Regular;
   const color = entry.overwrite ? "var(--pvf-warning)" : "var(--pvf-success)";
-  const title = `${status}\n来源：${entry.sourcePath}\n目标：${entry.targetPath}\n类型：${dataTypeLabel(entry.dataType)}\n大小：${sizeLabel(entry.size)}`;
+  const encodingLabel = entry.sourceEncoding && entry.sourceEncoding !== "UTF-8" ? `${entry.sourceEncoding} → UTF-8` : "";
+  const title = `${encodingLabel ? `自动识别：${encodingLabel}\n` : ""}${status}\n来源：${entry.sourcePath}\n目标：${entry.targetPath}\n类型：${dataTypeLabel(entry.dataType)}\n大小：${sizeLabel(entry.size)}`;
   return h("span", {
     class: ["import-tree-file", entry.overwrite ? "import-tree-file--overwrite" : "import-tree-file--new"],
     title,
@@ -218,6 +219,7 @@ function renderTreeLabel({ option }: { option: TreeOption }): VNodeChild {
       lineHeight: "20px",
       whiteSpace: "nowrap",
     } }, node.label ?? ""),
+    encodingLabel ? h(NTag, { size: "small", type: "info", bordered: false }, { default: () => encodingLabel }) : null,
   ]);
 }
 
@@ -352,7 +354,8 @@ function close(): void {
 
             <NText depth="3" class="import-hint">
               可在系统文件选择器中多选文件或目录；目录会递归导入并保留目录名。<br />
-              预览确认后才会修改内存归档；冲突文件将覆盖内存内容。
+              预览确认后才会修改内存归档；冲突文件将覆盖内存内容。<br />
+              <template v-if="importer.mode === 'text'">自动识别文本编码，非 UTF-8 文件将转为 UTF-8 导入，源文件保持不变。</template>
             </NText>
           </template>
           <template v-else>
@@ -395,6 +398,9 @@ function close(): void {
               覆盖 {{ importer.preview.overwrittenCount.toLocaleString() }}
             </NTag>
           </div>
+          <NAlert v-if="importer.preview.convertedCount" type="info" :show-icon="false">
+            自动识别到 {{ importer.preview.convertedCount.toLocaleString() }} 个非 UTF-8 文件，将转为 UTF-8 导入，源文件保持不变。文件旁显示识别编码；自动识别可能存在偏差，请确认后导入。
+          </NAlert>
           <NTree
             block-line
             :data="treeData"

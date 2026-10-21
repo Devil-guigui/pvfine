@@ -618,6 +618,7 @@ export interface ImportPreview {
     "overwrittenCount": number;
     "entries": (ImportPreviewEntry | null)[] | null;
     "entriesTruncated": boolean;
+    "convertedCount": number;
 }
 
 /**
@@ -629,6 +630,7 @@ export interface ImportPreviewEntry {
     "dataType": number;
     "size": number;
     "overwrite": boolean;
+    "sourceEncoding": string;
 }
 
 /**

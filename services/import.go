@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -41,23 +40,26 @@ type ImportPreview struct {
 	OverwrittenCount int                   `json:"overwrittenCount"`
 	Entries          []*ImportPreviewEntry `json:"entries"`
 	EntriesTruncated bool                  `json:"entriesTruncated"`
+	ConvertedCount   int                   `json:"convertedCount"`
 }
 
 // ImportPreviewEntry is one validated source-to-archive mapping.
 type ImportPreviewEntry struct {
-	SourcePath string `json:"sourcePath"`
-	TargetPath string `json:"targetPath"`
-	DataType   int32  `json:"dataType"`
-	Size       int64  `json:"size"`
-	Overwrite  bool   `json:"overwrite"`
+	SourcePath     string `json:"sourcePath"`
+	TargetPath     string `json:"targetPath"`
+	DataType       int32  `json:"dataType"`
+	Size           int64  `json:"size"`
+	Overwrite      bool   `json:"overwrite"`
+	SourceEncoding string `json:"sourceEncoding"`
 }
 
 type importFile struct {
-	sourcePath string
-	targetPath string
-	data       []byte
-	text       string
-	dataType   int32
+	sourcePath     string
+	targetPath     string
+	data           []byte
+	sourceEncoding string
+	text           string
+	dataType       int32
 }
 
 type importSelection struct {
@@ -118,6 +120,9 @@ func (s *ArchiveService) PreviewImport(sourcePaths []string, targetDir, mode str
 		Entries:    []*ImportPreviewEntry{},
 	}
 	for _, file := range files {
+		if file.sourceEncoding != "" && file.sourceEncoding != "UTF-8" {
+			preview.ConvertedCount++
+		}
 		_, overwrite := a.Find(file.targetPath)
 		if overwrite {
 			preview.OverwrittenCount++
@@ -126,11 +131,12 @@ func (s *ArchiveService) PreviewImport(sourcePaths []string, targetDir, mode str
 		}
 		if len(preview.Entries) < maxImportPreviewEntries {
 			preview.Entries = append(preview.Entries, &ImportPreviewEntry{
-				SourcePath: file.sourcePath,
-				TargetPath: file.targetPath,
-				DataType:   file.dataType,
-				Size:       int64(len(file.data)),
-				Overwrite:  overwrite,
+				SourcePath:     file.sourcePath,
+				TargetPath:     file.targetPath,
+				DataType:       file.dataType,
+				Size:           int64(len(file.data)),
+				Overwrite:      overwrite,
+				SourceEncoding: file.sourceEncoding,
 			})
 		} else {
 			preview.EntriesTruncated = true
@@ -516,10 +522,9 @@ func readImportFiles(files []importFile, mode string) error {
 		file.data = data
 		file.dataType = importDataType(file.targetPath)
 		if mode == ImportModeText {
-			if !utf8.Valid(data) {
-				return fmt.Errorf("文本文件 %q 不是有效的 UTF-8", file.sourcePath)
+			if err := file.decodeText(); err != nil {
+				return err
 			}
-			file.text = strings.TrimPrefix(string(data), "\uFEFF")
 		}
 	}
 	return nil
