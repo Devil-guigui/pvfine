@@ -53,7 +53,7 @@ export function readBooster(text: string): BoosterDocument {
    const rows: BoosterRow[] = [];
    const pools:BoosterPool[]=[];
    for (const child of info.children) {
-    if (!['etc','stackable'].includes(child.name) || !child.paired) throw new Error('包含特殊礼包奖励，请在 DSL 中编辑');
+    if (!['etc','stackable','cera'].includes(child.name) || !child.paired) throw new Error('包含特殊礼包奖励，请在 DSL 中编辑');
     const values = numbers(child);
     if (values.length<4 || (values.length-1)%3) throw new Error(`[${child.name}] 需包含随机获得项数及成组的物品 ID、权重、数量，请在 DSL 中编辑`);
     const poolIndex=pools.length;

@@ -83,7 +83,7 @@ function apply(){
     </template>
     <section v-for="(group,i) in draft.groups" :key="i" class="reward-group">
      <div class="booster-heading"><strong>{{boosterGroupLabel(draft,group)}}<span v-if="group.equipmentUpgrade!==undefined"> · 装备强化 +{{group.equipmentUpgrade}}</span></strong><NButton v-if="draft.mode!=='booster'" size="small" :disabled="!canAddReward(group)" :title="canAddReward(group)?undefined:'此空分类未配置名称，请先在 DSL 中补充名称'" @click="group.rows.push(newBoosterRow(draft,group))">添加奖励</NButton></div>
-     <div v-if="draft.mode==='booster'" class="pool-settings"><div v-for="(pool,p) in group.pools" :key="p" class="pool-setting"><label>奖励池 {{p+1}} · 随机获得项数<NInput v-model:value="pool.drawCount" :input-props="{'aria-label':`奖励池${p+1}随机获得项数`}" /></label><NButton size="small" @click="group.rows.push(newBoosterRow(draft,group,p))">添加候选物品</NButton></div></div>
+     <div v-if="draft.mode==='booster'" class="pool-settings"><div v-for="(pool,p) in group.pools" :key="p" class="pool-setting"><label>奖励池 {{p+1}} · {{pool.source.name==='cera'?'商城道具 · ':''}}随机获得项数<NInput v-model:value="pool.drawCount" :input-props="{'aria-label':`奖励池${p+1}随机获得项数`}" /></label><NButton size="small" @click="group.rows.push(newBoosterRow(draft,group,p))">添加候选物品</NButton></div></div>
      <div v-for="(row,j) in group.rows" :key="j" class="reward-inputs">
       <span v-if="draft.mode==='booster' && (group.pools?.length??0)>1" class="hint">奖励池 {{(row.poolIndex??0)+1}}</span>
       <div class="reward-item"><NInput v-model:value="row.id" placeholder="物品 ID" :input-props="{'aria-label':`分类${i+1}奖励${j+1}物品 ID`}"/><ItemPicker v-model="row.id" :label="names[row.id.trim()]?boosterRewardName(group,names[row.id.trim()]!):undefined" :disabled="disabled" /></div>

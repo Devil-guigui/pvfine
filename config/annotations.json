@@ -7872,9 +7872,9 @@
         "section": "cera"
       },
       "annotation": {
-        "title": "点券奖励",
+        "title": "商城道具奖励",
         "type": "text",
-        "content": "礼盒中的点券奖励"
+        "content": "礼盒中的商城道具奖励；首个参数为抽取项数，其后每三个参数为一组：道具 ID、权重、道具数量"
       },
       "group": "stk"
     },

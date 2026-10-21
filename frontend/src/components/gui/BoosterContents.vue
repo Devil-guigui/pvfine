@@ -146,7 +146,7 @@ onBeforeUnmount(()=>{generation++;emit('pending',false);});
   <div class="contents-list" role="list" aria-label="礼包物品">
    <template v-for="(row,i) in rows" :key="`${category}:${subcategory}:${i}:${row.id}`">
     <div v-if="document.mode==='booster'&&(i===0||row.poolIndex!==rows[i-1]?.poolIndex)" class="pool-caption">
-     <span>{{(group?.pools?.length??0)>1?`奖励池 ${(row.poolIndex??0)+1} · `:''}}随机获得 {{group?.pools?.[row.poolIndex??0]?.drawCount}} 项</span>
+     <span>{{(group?.pools?.length??0)>1?`奖励池 ${(row.poolIndex??0)+1} · `:''}}{{group?.pools?.[row.poolIndex??0]?.source.name==='cera'?'商城道具 · ':''}}随机获得 {{group?.pools?.[row.poolIndex??0]?.drawCount}} 项</span>
      <div v-if="editable" class="inline-tools"><NButton size="tiny" quaternary :disabled="toolsDisabled" :aria-label="`编辑奖励池${(row.poolIndex??0)+1}抽取数量`" @click="settings(row.poolIndex??0)">修改项数</NButton><NButton size="tiny" secondary :disabled="toolsDisabled" :aria-label="`奖励池${(row.poolIndex??0)+1}添加物品`" @click="editItem(undefined,row.poolIndex??0)">添加物品</NButton></div>
     </div>
     <div class="contents-row" :class="{'is-checked':checked.includes(i)}" role="listitem">

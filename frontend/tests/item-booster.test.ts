@@ -382,3 +382,31 @@ describe('自选装备强化等级',()=>{
   const draft=clone(text);draft.groups[0]!.equipmentUpgrade='12';expect(()=>editBooster(text,draft)).toThrow('强化等级已变化');
  });
 });
+
+describe('商城道具随机奖励',()=>{
+ const text=itemTemplate('booster').replace('[etc]\n1 1 1000 1\n[/etc]','[cera]\n\t1\t42\t1000\t50 # 商城道具\n[/cera]');
+ it('按抽取项数及三参数记录读取，原文往返',()=>{
+  const draft=clone(text),group=draft.groups[0]!;
+  expect(draft.issue).toBe('');expect(group.pools![0]!.source.name).toBe('cera');expect(group.pools![0]!.drawCount).toBe('1');
+  expect(group.rows).toEqual([{sourceIndex:0,poolIndex:0,id:'42',weight:'1000',quantity:'50'}]);expect(editBooster(text,draft)).toBe(text);
+ });
+ it('修改抽取项数、ID、权重及数量，保留标签、注释和 CRLF',()=>{
+  const source=text.replaceAll('\n','\r\n'),draft=clone(source),group=draft.groups[0]!;
+  group.pools![0]!.drawCount='2';Object.assign(group.rows[0]!,{id:'43',weight:'500',quantity:'100'});
+  expect(editBooster(source,draft)).toBe(source.replace('1\t42\t1000\t50','2\t43\t500\t100'));
+ });
+ it('混合奖励池增删商城候选，保留其他奖励池',()=>{
+  const source=text.replace('[/booster info]','[etc]\n2 100 300 4\n200 700 6\n[/etc]\n[/booster info]');
+  const draft=clone(source),group=draft.groups[0]!,row=newBoosterRow(draft,group,0);row.id='43';row.quantity='60';group.rows.push(row);
+  const added=editBooster(source,draft),next=clone(added);
+  expect(next.issue).toBe('');expect(next.groups[0]!.pools!.map(p=>p.source.name)).toEqual(['cera','etc']);
+  expect(next.groups[0]!.rows.filter(r=>r.poolIndex===0).map(r=>r.id)).toEqual(['42','43']);
+  expect(added).toContain('[etc]\n2 100 300 4\n200 700 6\n[/etc]');
+  next.groups[0]!.rows=next.groups[0]!.rows.filter(r=>r.id!=='42');
+  const result=editBooster(added,next),parsed=readBooster(result);
+  expect(parsed.issue).toBe('');expect(parsed.groups[0]!.rows.map(r=>r.id)).toEqual(['43','100','200']);expect(result).toContain('[cera]');
+ });
+ it('拒绝缺少记录参数的商城奖励',()=>{
+  for(const value of ['1','1 42 1000','1 42 1000 50 43'])expect(readBooster(text.replace('1\t42\t1000\t50',value)).issue).toContain('成组');
+ });
+});

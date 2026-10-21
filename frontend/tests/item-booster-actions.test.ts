@@ -142,3 +142,16 @@ describe('礼包行内物品管理',()=>{
   expect(()=>applyBoosterInlineAction(text,{kind:'edit-item',group:0,index:9,row:{id:'100',quantity:'1',weight:''}})).toThrow('物品已变化');
  });
 });
+
+describe('商城道具奖励行内编辑',()=>{
+ const text=itemTemplate('booster').replace('[etc]\n1 1 1000 1\n[/etc]','[cera]\n1 42 1000 50\n[/cera]');
+ it('修改项数、编辑、添加及删除商城道具，保存仍使用 cera',()=>{
+  let result=applyBoosterInlineAction(text,{kind:'settings',pool:0,drawCount:'2'});
+  result=applyBoosterInlineAction(result,{kind:'edit-item',group:0,index:0,row:{id:'43',weight:'500',quantity:'100'}});
+  result=applyBoosterInlineAction(result,{kind:'add-item',group:0,row:{poolIndex:0,id:'44',weight:'500',quantity:'200'}});
+  let doc=checked(result);expect(doc.groups[0]!.pools![0]!.drawCount).toBe('2');
+  expect(doc.groups[0]!.rows.map(r=>[r.id,r.weight,r.quantity])).toEqual([['43','500','100'],['44','500','200']]);
+  result=applyBoosterInlineAction(result,{kind:'delete-item',group:0,index:0});doc=checked(result);
+  expect(doc.groups[0]!.rows.map(r=>r.id)).toEqual(['44']);expect(result).toContain('[cera]');expect(result).not.toContain('[etc]');
+ });
+});
