@@ -15,6 +15,15 @@ import {
   Dismiss24Regular,
   Drop24Regular,
   Globe24Regular,
+  Flash24Regular,
+  ArrowTrending24Regular,
+  ShieldCheckmark24Regular,
+  Sparkle24Regular,
+  Wrench24Regular,
+  BranchFork24Regular,
+  BuildingShop24Regular,
+  ClipboardTask24Regular,
+  Backpack24Regular,
   Key24Regular,
   Settings24Regular,
   Toolbox24Regular,
@@ -41,8 +50,13 @@ import { useScriptStore } from "../stores/script";
 import { useDropRateStore } from "../stores/dropRate";
 import IndexHashRegistrationModal from "./IndexHashRegistrationModal.vue";
 import { effectiveBinding, formatBinding, type ShortcutCommandId } from "../shortcuts";
+import { guiProviders } from "../gui/registry";
+import type { GUIProvider } from "../gui/types";
 
 const SkillBrowser = defineAsyncComponent(() => import("./gui/SkillBrowser.vue"));
+const FileGUILauncher = defineAsyncComponent(() => import("./gui/FileGUILauncher.vue"));
+const selectedGUIProvider = ref<GUIProvider | null>(null);
+const fileGUITools = guiProviders.filter(provider => ["shop", "quest", "item"].includes(provider.id));
 const archive = useArchiveStore();
 const editor = useEditorStore();
 const advancedSearch = useAdvancedSearchStore();
@@ -110,6 +124,19 @@ const versionTooltip = computed(() => {
   }
   return "管理工作区版本、提交和历史";
 });
+function getFileGUIIcon(id: string) {
+  switch (id) {
+    case "shop":
+      return BuildingShop24Regular;
+    case "quest":
+      return ClipboardTask24Regular;
+    case "item":
+      return Backpack24Regular;
+    default:
+      return DocumentText24Regular;
+  }
+}
+
 const toolOptions = computed(() => [
   {
     label: "基础掉率",
@@ -127,26 +154,46 @@ const toolOptions = computed(() => [
     label: "技能参数",
     key: "skills",
     disabled: !archive.open,
-    icon: () => h(NIcon, null, { default: () => h(Code24Regular) }),
+    icon: () => h(NIcon, null, { default: () => h(Flash24Regular) }),
   },
   {
     label: "强化/增幅/锻造",
     key: "upgrade-tools",
     disabled: !archive.open,
-    icon: () => h(NIcon, null, { default: () => h(Code24Regular) }),
+    icon: () => h(NIcon, null, { default: () => h(ArrowTrending24Regular) }),
     children: [
-      { label: "强化概率", key: "upgrade", disabled: !archive.open },
-      { label: "增幅概率", key: "amplify-upgrade", disabled: !archive.open },
-      { label: "锻造配置", key: "forge", disabled: !archive.open },
+      {
+        label: "强化概率",
+        key: "upgrade",
+        disabled: !archive.open,
+        icon: () => h(NIcon, null, { default: () => h(ShieldCheckmark24Regular) }),
+      },
+      {
+        label: "增幅概率",
+        key: "amplify-upgrade",
+        disabled: !archive.open,
+        icon: () => h(NIcon, null, { default: () => h(Sparkle24Regular) }),
+      },
+      {
+        label: "锻造配置",
+        key: "forge",
+        disabled: !archive.open,
+        icon: () => h(NIcon, null, { default: () => h(Wrench24Regular) }),
+      },
     ],
   },
   {
-    label: "归档对比",
-    key: "archive-diff",
-    disabled: !archive.open || archive.loading,
-    icon: () => h(NIcon, null, { default: () => h(DocumentSync24Regular) }),
+    label: "技能树",
+    key: "skill-tree",
+    disabled: !archive.open,
+    icon: () => h(NIcon, null, { default: () => h(BranchFork24Regular) }),
   },
-  { label: "技能树", key: "skill-tree", disabled: !archive.open, icon: () => h(NIcon, null, { default: () => h(Code24Regular) }) },
+  ...fileGUITools.map(provider => ({
+    label: `${provider.label}编辑器`,
+    key: `file-gui:${provider.id}`,
+    disabled: !archive.open,
+    icon: () => h(NIcon, null, { default: () => h(getFileGUIIcon(provider.id)) }),
+  })),
 ]);
 watch(
   () => archive.unpackMessage,
@@ -274,14 +321,15 @@ function onCancelUnpack() {
   archive.cancelUnpack();
 }
 
+function onArchiveDiff(): void {
+  if (!archive.open || archive.loading) return;
+  archiveDiff.open();
+  editor.openCompareTab();
+}
+
 async function onToolSelect(key: string): Promise<void> {
-  if (key === "archive-diff") {
-    if (!archive.open) {
-      message.warning("请先在主界面打开一个 PVF 归档，再与外部 PVF 进行对比");
-      return;
-    }
-    archiveDiff.open();
-    editor.openCompareTab();
+  if (key.startsWith("file-gui:")) {
+    if (archive.open) selectedGUIProvider.value = fileGUITools.find(provider => `file-gui:${provider.id}` === key) ?? null;
     return;
   }
   if (key === "forge") {
@@ -331,6 +379,7 @@ function isCancel(e: any): boolean {
 </script>
 
 <template>
+  <FileGUILauncher v-if="selectedGUIProvider" :provider="selectedGUIProvider" @close="selectedGUIProvider = null" />
   <SkillTreeBrowser v-if="skillTreeVisible" v-model:show="skillTreeVisible" />
   <SkillBrowser v-if="skillBrowserVisible" v-model:show="skillBrowserVisible" />
   <div class="toolbar" role="toolbar" aria-label="主工具栏">
@@ -507,6 +556,15 @@ function isCancel(e: any): boolean {
           </NButton>
         </template>
         为指定 lst 补齐缺失的 indexhash
+      </NTooltip>
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <NButton quaternary :disabled="!archive.open || archive.loading" @click="onArchiveDiff">
+            <template #icon><NIcon><DocumentSync24Regular /></NIcon></template>
+            归档对比
+          </NButton>
+        </template>
+        {{ archive.open ? "将当前归档与外部 PVF 进行对比" : "需先打开 PVF 归档" }}
       </NTooltip>
     </div>
 
