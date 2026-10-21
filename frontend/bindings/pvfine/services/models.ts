@@ -388,6 +388,19 @@ export interface EditorAnnotation {
     "rarity": number;
 }
 
+export interface EffectParticle {
+    "life": number;
+    "frequency": number;
+    "maximum": number;
+    "maximumTime": number;
+    "gravity": number;
+    "position": number[] | null;
+    "area": number[] | null;
+    "alpha": number[] | null;
+    "velocity": number[] | null;
+    "acceleration": number[] | null;
+}
+
 /**
  * EquipmentPreviewAttribute is one visible line in an equipment tooltip.
  */
@@ -705,6 +718,18 @@ export interface ItemCreationCheck {
     "listPath": string;
     "entryPath": string;
     "conflicts": string[] | null;
+}
+
+export interface ItemEffectLayer {
+    "path": string;
+    "animation": AniPreviewDocument | null;
+    "particle"?: EffectParticle | null;
+}
+
+export interface ItemEffectPreview {
+    "objectPath": string;
+    "layers": ItemEffectLayer[] | null;
+    "issues": string[] | null;
 }
 
 /**

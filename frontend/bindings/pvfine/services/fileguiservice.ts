@@ -77,6 +77,14 @@ export function ReadItemAppearances(ids: string[] | null): $CancellablePromise<{
 }
 
 /**
+ * ReadItemEffectPreview resolves live LST references, relative paths and editor
+ * drafts. It reads only PVF resources; sprite decoding remains in ImageService.
+ */
+export function ReadItemEffectPreview(fileIndex: number, objectID: string, particle: string, drafts: $models.ShopDraft[] | null): $CancellablePromise<$models.ItemEffectPreview | null> {
+    return $Call.ByID(1037122538, fileIndex, objectID, particle, drafts);
+}
+
+/**
  * ReadItemIcons reads only display metadata for the currently visible rewards.
  */
 export function ReadItemIcons(ids: string[] | null): $CancellablePromise<{ [_ in string]?: $models.ImageReference | null } | null> {
