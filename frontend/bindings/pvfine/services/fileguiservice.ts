@@ -62,6 +62,10 @@ export function ReadForge(fileIndex: number, text: string): $CancellablePromise<
     return $Call.ByID(1666123291, fileIndex, text);
 }
 
+export function ReadIndependentDrop(fileIndex: number, text: string): $CancellablePromise<$models.IndependentDropDocument | null> {
+    return $Call.ByID(286472991, fileIndex, text);
+}
+
 /**
  * ReadItem resolves the same item union used by shop lists and search pickers.
  */

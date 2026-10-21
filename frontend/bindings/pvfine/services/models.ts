@@ -642,6 +642,40 @@ export interface ImportResult {
     "changedPaths"?: string[] | null;
 }
 
+export interface IndependentDropDocument {
+    "version": string;
+    "rows": IndependentDropRow[] | null;
+    "lists": IndependentDropList[] | null;
+    "balance": SkillNumber[] | null;
+    "bodyEnd": number;
+    "isList": boolean;
+    "issues": string[] | null;
+}
+
+export interface IndependentDropItem {
+    "fields": SkillNumber[] | null;
+    "name": string;
+}
+
+export interface IndependentDropList {
+    "id": string;
+    "path": string;
+    "fileIndex": number;
+}
+
+export interface IndependentDropRow {
+    "listTagStart": number;
+    "fields": SkillNumber[] | null;
+    "items": IndependentDropItem[] | null;
+    "monsterName": string;
+    "itemName": string;
+    "start": number;
+    "end": number;
+    "listStart": number;
+    "listEnd": number;
+    "hasExtensions": boolean;
+}
+
 /**
  * IndexHashRegistrationResult summarizes a batch hash registration.
  */

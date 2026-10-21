@@ -24,6 +24,7 @@ import {
   BuildingShop24Regular,
   ClipboardTask24Regular,
   Backpack24Regular,
+  Reward24Regular,
   Key24Regular,
   Settings24Regular,
   Toolbox24Regular,
@@ -132,6 +133,8 @@ function getFileGUIIcon(id: string) {
       return ClipboardTask24Regular;
     case "item":
       return Backpack24Regular;
+    case "independent-drop":
+      return Reward24Regular;
     default:
       return DocumentText24Regular;
   }
@@ -149,6 +152,12 @@ const toolOptions = computed(() => [
     key: "world-drop",
     disabled: !archive.open,
     icon: () => h(NIcon, null, { default: () => h(Globe24Regular) }),
+  },
+  {
+    label: "独立掉落",
+    key: "independent-drop",
+    disabled: !archive.open,
+    icon: () => h(NIcon, null, { default: () => h(Reward24Regular) }),
   },
   {
     label: "技能参数",
@@ -357,6 +366,11 @@ async function onToolSelect(key: string): Promise<void> {
     if (!opened) {
       message.error(dropRate.error || "无法打开基础掉率编辑器");
     }
+    return;
+  }
+  if (key === "independent-drop") {
+    try { await editor.openIndependentDrop(); }
+    catch (err: any) { message.error(`打开独立掉落失败: ${err?.message ?? err}`); }
     return;
   }
   if (key === "world-drop") {

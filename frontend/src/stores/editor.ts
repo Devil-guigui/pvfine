@@ -813,6 +813,19 @@ export const useEditorStore = defineStore("editor", () => {
     return true;
   }
 
+  async function openIndependentDrop(requestedPaneId?: EditorPaneId): Promise<boolean> {
+    const targetPaneId = resolvePaneId(requestedPaneId);
+    const nodes = await ArchiveService.ResolveFiles(["etc/independent_drop.etc"]);
+    const target = nodes?.find(node => node && !node.isDir && node.fileIndex >= 0);
+    if (!target) throw new Error("此归档未包含 etc/independent_drop.etc，可能不支持独立掉落");
+    await openFile(target.fileIndex, targetPaneId);
+    const tab = tabs.value.find(tab => tab.index === target.fileIndex);
+    if (!tab) return false;
+    if (tab.loadError) throw new Error(tab.loadError);
+    setGUIMode(target.fileIndex, "gui", targetPaneId);
+    return true;
+  }
+
   /** 工具菜单与文件 GUI 共用同一标签，保留已打开文件的草稿。 */
   async function openUpgrade(amplify = false, requestedPaneId?: EditorPaneId): Promise<boolean> {
     const targetPaneId = resolvePaneId(requestedPaneId);
@@ -1375,6 +1388,7 @@ export const useEditorStore = defineStore("editor", () => {
     applyShopEdit,
     applyWorldDropEdit,
     openWorldDrop,
+    openIndependentDrop,
     getGUIModes,
     setGUIMode,
     registerGUIDirtyChecker,

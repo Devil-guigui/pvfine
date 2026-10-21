@@ -62,6 +62,14 @@ export const guiProviders: readonly GUIProvider[] = [
     matches: (file) => /\.(equ|stk)$/i.test(file.path),
     component: defineAsyncComponent(() => import("../components/gui/ItemViewer.vue")),
   },
+  {
+    id: "independent-drop",
+    label: "独立掉落",
+    launcher: { fileTypes: "etc/independent_drop.etc、etc/independentdrop/*.etc", paths: ["etc/independent_drop.etc"], queries: ["etc/independent_drop.etc", "etc/independentdrop/"] },
+    readOnly: false,
+    matches: (file) => normalizePath(file.path) === "etc/independent_drop.etc" || /^etc\/independentdrop\/.+\.etc$/.test(normalizePath(file.path)),
+    component: defineAsyncComponent(() => import("../components/gui/IndependentDropViewer.vue")),
+  },
 ];
 
 export function getGUIProvider(file: GUIFile): GUIProvider | null {
