@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"embed"
 	"log"
 	"log/slog"
@@ -184,7 +183,8 @@ func main() {
 		},
 	})
 	services.ObserveLogEvents(app)
-	app.RegisterService(application.NewService(services.NewUpdateService(app, appVersion)))
+	updateService := services.NewUpdateService(app, appVersion)
+	app.RegisterService(application.NewService(updateService))
 	scriptWindowService := services.NewScriptWindowService(app)
 	app.RegisterService(application.NewService(scriptWindowService))
 	closeCoordinator := newCloseCoordinator(app, scriptWindowService)
@@ -197,7 +197,7 @@ func main() {
 	if updaterEnabled {
 		appMenu.Add("检查更新").OnClick(func(*application.Context) {
 			go func() {
-				if err := app.Updater.CheckAndInstall(context.Background()); err != nil {
+				if err := updateService.CheckForUpdates(); err != nil {
 					log.Printf("检查更新失败: %v", err)
 				}
 			}()
@@ -271,7 +271,7 @@ func main() {
 	})
 
 	if updaterEnabled {
-		startBackgroundUpdateCheck(app)
+		startBackgroundUpdateCheck(updateService)
 	}
 
 	if err := app.Run(); err != nil {
@@ -305,22 +305,17 @@ func configureUpdater(app *application.App) bool {
 	return true
 }
 
-func startBackgroundUpdateCheck(app *application.App) {
+func startBackgroundUpdateCheck(updateService *services.UpdateService) {
 	if githubRepository == "" || appVersion == "" || appVersion == "dev" || appVersion == "0.0.0" {
 		return
 	}
 
 	go func() {
 		// Give the first window time to enter the event loop before opening the
-		// updater window when a newer release is available.
+		// update confirmation when a newer release is available.
 		time.Sleep(3 * time.Second)
 
-		release, err := app.Updater.Check(context.Background())
-		if err != nil || release == nil {
-			return
-		}
-
-		if err := app.Updater.CheckAndInstall(context.Background()); err != nil {
+		if err := services.CheckForUpdatesInBackground(updateService); err != nil {
 			log.Printf("自动更新失败: %v", err)
 		}
 	}()

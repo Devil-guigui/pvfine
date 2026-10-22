@@ -1343,7 +1343,7 @@ function formatBytes(bytes: number): string {
                     <div class="setting-item-content">
                       <div class="setting-item-label">检查版本更新</div>
                       <div class="setting-item-desc">
-                        连接 GitHub Release 频道检测是否有可用的新版本与性能优化
+                        连接 GitHub Release 频道检查新版本，确认后才会下载更新
                       </div>
                     </div>
                     <div class="setting-item-control">
