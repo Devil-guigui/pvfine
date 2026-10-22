@@ -141,9 +141,11 @@ func main() {
 ## 🛠️ 开发与构建
 
 ### 环境要求
-- **Go**: `1.25.0` 或更高版本
+- **Go**: `1.26.0` 或更高版本
 - **Node.js**: `18.0.0` 或更高版本及 `npm`
-- **Wails v3 CLI**: `go install github.com/wailsapp/wails/v3/cmd/wails3@latest`
+- **Wails v3 CLI**: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.34`
+
+macOS 构建默认启用 `private_mac_apis`，用于保留主窗口和脚本窗口的 Liquid Glass 透明背景。Wails Go 依赖、CLI 与前端 runtime 应保持同一版本。
 
 ### 开发与测试
 ```bash
